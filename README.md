@@ -87,23 +87,23 @@ integrity against an adversary rather than against loss. See
 
 **Tier** critical-path · **Audited** 2026-08-28 (deep) · **v1.0.0 gates** 14/16 · [Full checklist](docs/plans/use-protection-please.md)
 
-`██████████████░░░░░░` **72%** &nbsp;·&nbsp; 26 Completed · 1 Scheduled · 9 Incomplete · 5 N/A
+`█████████████████░░░` **89%** &nbsp;·&nbsp; 32 Completed · 1 Scheduled · 3 Incomplete · 5 N/A
 
 | Phase | ✅ Completed | 🗓 Scheduled | ⬜ Incomplete | · N/A |
 |---|--:|--:|--:|--:|
 | 0 — Threat modeling | 2 | 0 | 0 | 0 |
 | 1 — Toolchain | 3 | 0 | 1 | 0 |
-| 2 — Supply chain | 6 | 0 | 2 | 0 |
+| 2 — Supply chain | 7 | 0 | 1 | 0 |
 | 3 — Code level | 6 | 0 | 0 | 1 |
-| 4 — Static analysis | 0 | 0 | 1 | 0 |
-| 5 — Dynamic analysis | 2 | 0 | 1 | 0 |
+| 4 — Static analysis | 1 | 0 | 0 | 0 |
+| 5 — Dynamic analysis | 3 | 0 | 0 | 0 |
 | 6 — Fuzzing and properties | 3 | 1 | 0 | 0 |
-| 7 — Formal verification | 0 | 0 | 1 | 0 |
+| 7 — Formal verification | 1 | 0 | 0 | 0 |
 | 8 — Build and binary | 2 | 0 | 0 | 0 |
 | 9 — Runtime privilege | 0 | 0 | 0 | 1 |
 | 10 — Cryptography | 0 | 0 | 0 | 3 |
-| 11 — CI/CD, release, and operations | 2 | 0 | 3 | 0 |
-| **Total** | **26** | **1** | **9** | **5** |
+| 11 — CI/CD, release, and operations | 4 | 0 | 1 | 0 |
+| **Total** | **32** | **1** | **3** | **5** |
 
 **Next up** — H-27 Continuous fuzzing with no open crashes (Tim Almond — 2026-09-28)
 

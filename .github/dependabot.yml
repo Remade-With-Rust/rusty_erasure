@@ -1,0 +1,45 @@
+# Dependency freshness with a human in the loop (use-protection-please H-14).
+#
+# Updates arrive as PRs, which means they pass the full hardening gate before
+# anyone can merge them: cargo deny, cargo audit, cargo vet, clippy -D
+# warnings, Miri, the 8-target check matrix, and the cross-architecture corpus
+# replay. Nothing here auto-merges — a dependency bump is a supply-chain event
+# and gets a review, per the standard.
+#
+# Note the shape of what this actually watches: the published library has ZERO
+# third-party dependencies, so cargo updates only ever touch the CLI's
+# allocator seam or the test-only oracle. The GitHub Actions ecosystem is the
+# higher-value half here, because a compromised action runs in CI with our
+# token.
+version: 2
+
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "supply-chain"]
+    commit-message:
+      prefix: "deps"
+
+  # The fuzz crate is its own workspace (it needs libfuzzer-sys and a nightly
+  # toolchain), so Dependabot needs to be pointed at it separately.
+  - package-ecosystem: cargo
+    directory: "/fuzz"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    labels: ["dependencies", "fuzzing"]
+    commit-message:
+      prefix: "deps(fuzz)"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    labels: ["dependencies", "ci"]
+    commit-message:
+      prefix: "ci"

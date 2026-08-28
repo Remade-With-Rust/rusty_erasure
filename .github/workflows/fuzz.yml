@@ -35,16 +35,16 @@ jobs:
       matrix:
         target: [roundtrip, compat, raid, kernels, matrix_gen, matrix_invert]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - run: rustup toolchain install nightly
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@37f7c5781271959fb65b6b35224e28652ff2b63d # v2
         with:
           tool: cargo-fuzz
 
       # Resume from the accumulated corpus. restore-keys makes each run pick
       # up the most recent cache even though the key is run-unique, so the
       # corpus grows monotonically instead of resetting nightly.
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: fuzz/corpus/${{ matrix.target }}
           key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
@@ -58,7 +58,7 @@ jobs:
 
       - name: upload reproducers
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: fuzz-artifacts-${{ matrix.target }}
           path: fuzz/artifacts/${{ matrix.target }}/
@@ -79,11 +79,11 @@ jobs:
     env:
       RUSTY_ERASURE_SWEEP: "200000"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - if: matrix.target == 'wasm32-wasip1'
         run: rustup target add wasm32-wasip1
       - if: matrix.target == 'wasm32-wasip1'
-        uses: bytecodealliance/actions/wasmtime/setup@v1
+        uses: bytecodealliance/actions/wasmtime/setup@9152e710e9f7182e4c29ad218e4f335a7b203613 # v1
       - name: sweep ${{ matrix.name }}
         run: |
           if [ "${{ matrix.target }}" = "wasm32-wasip1" ]; then

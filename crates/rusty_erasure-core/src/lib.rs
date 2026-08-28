@@ -24,6 +24,8 @@ pub mod error;
 pub mod gf;
 pub mod kernel;
 pub mod matrix;
+#[cfg(kani)]
+mod proofs;
 pub mod raid;
 pub mod tables;
 

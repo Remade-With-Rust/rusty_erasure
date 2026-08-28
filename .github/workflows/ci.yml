@@ -4,6 +4,13 @@ on:
   push:
   pull_request:
 
+# Least privilege (use-protection-please H-37): nothing in this workflow
+# writes to the repository, so the token cannot. Jobs that genuinely need
+# more (the release workflow's attestations, the advisory workflow's issues)
+# request it locally rather than inheriting it here.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -23,7 +30,7 @@ jobs:
           - aarch64-apple-darwin
           - wasm32-unknown-unknown
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - run: rustup target add ${{ matrix.target }}
       - name: check libraries on ${{ matrix.target }}
         run: >
@@ -43,7 +50,7 @@ jobs:
         # matches-scalar gate is the oracle there; macos-latest is arm64 too.
         os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - run: cargo test --workspace
       - run: cargo test -p rusty_erasure --no-default-features
 
@@ -56,9 +63,9 @@ jobs:
       RUSTFLAGS: -C target-feature=+simd128
       CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - run: rustup target add wasm32-wasip1
-      - uses: bytecodealliance/actions/wasmtime/setup@v1
+      - uses: bytecodealliance/actions/wasmtime/setup@9152e710e9f7182e4c29ad218e4f335a7b203613 # v1
       - run: >
           cargo test --target wasm32-wasip1
           -p rusty_erasure-core -p rusty_erasure-accel -p rusty_erasure
@@ -67,7 +74,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
@@ -77,8 +84,8 @@ jobs:
   supply-chain:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: taiki-e/install-action@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: taiki-e/install-action@37f7c5781271959fb65b6b35224e28652ff2b63d # v2
         with:
           tool: cargo-deny@0.19.9,cargo-audit@0.22.2
       - run: cargo deny check
@@ -89,16 +96,69 @@ jobs:
   miri:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - run: rustup toolchain install nightly --component miri
       - run: cargo +nightly miri test -p rusty_erasure-core -p rusty_erasure
+
+  # Repo-specific pattern rules beyond clippy (H-22): unsafe outside the one
+  # sanctioned crate, a global allocator in a library, kernel dispatch inside
+  # a loop, mixed table formats, parity described as authentication.
+  #
+  # The job runs the ruleset TWICE — clean over the real tree, and every rule
+  # must still fire over tools/semgrep-selftest. A pattern rule that quietly
+  # stopped matching reports safety it is no longer checking.
+  static-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - run: pip install semgrep==1.175.0
+      - run: bash tools/run_semgrep.sh
+
+  # `cargo careful` runs the tests against a std built with extra debug
+  # assertions and uninitialised-memory checks (H-25) — a class of fault the
+  # byte-identity oracles cannot see.
+  careful:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - run: rustup toolchain install nightly --component rust-src
+      - uses: taiki-e/install-action@37f7c5781271959fb65b6b35224e28652ff2b63d # v2
+        with:
+          tool: cargo-careful@1.6.0
+      - run: cargo +nightly careful test --workspace
+
+  # Formal verification of the arithmetic that justifies the unsafe (H-30).
+  #
+  # Kani has no model for core::arch SIMD intrinsics, so the kernel bodies
+  # cannot be symbolically executed. What it CAN prove is the part the
+  # `// SAFETY:` comments actually assert: that every table offset and loop
+  # bound the kernels compute stays inside the region their safe wrappers
+  # asserted, for every shape in the domain. See crates/rusty_erasure-core/
+  # src/proofs.rs for what this does and does not cover.
+  kani:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # Kani 0.67 bundles a 1.93 nightly, which refuses a manifest declaring
+      # rust-version 1.95. The MSRV is a CONSUMER contract, not a constraint
+      # on a verifier, so relax it for this ephemeral checkout only. Nothing
+      # published is affected; the committed manifest is untouched.
+      - run: sed -i 's/^rust-version = .*/rust-version = "1.85"/' Cargo.toml
+      - uses: taiki-e/install-action@37f7c5781271959fb65b6b35224e28652ff2b63d # v2
+        with:
+          tool: kani-verifier@0.67.0
+      - run: cargo kani setup
+      - run: cargo kani -p rusty_erasure-core
 
   # cargo-vet: every dependency covered by an audit certification (H-10).
   vet:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: taiki-e/install-action@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: taiki-e/install-action@37f7c5781271959fb65b6b35224e28652ff2b63d # v2
         with:
           tool: cargo-vet@0.10.2
       - run: cargo vet --locked
@@ -109,8 +169,8 @@ jobs:
   binary-hardening:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: taiki-e/install-action@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: taiki-e/install-action@37f7c5781271959fb65b6b35224e28652ff2b63d # v2
         with:
           tool: cargo-auditable@0.7.5
       - run: cargo auditable build --release -p rusty_erasure-cli

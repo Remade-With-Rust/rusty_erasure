@@ -1,0 +1,118 @@
+# Repo-specific static analysis (use-protection-please H-22).
+#
+# Generic Rust rulesets mostly restate clippy. These encode THIS codebase's
+# structural laws — the invariants that hold the safety argument together and
+# that a reviewer could plausibly break without any lint noticing. Each has
+# been checked to fire on a deliberate violation; a rule that cannot match is
+# a fake gate.
+
+rules:
+  # The whole safety argument rests on unsafe being confined to one crate
+  # whose every kernel is byte-gated against a forbid(unsafe_code) oracle.
+  # unsafe appearing anywhere else silently voids that.
+  - id: unsafe-outside-accel
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      `unsafe` outside rusty_erasure-accel. The safety argument depends on
+      unsafe living in exactly one crate, where every kernel is gated
+      byte-identical against the forbid(unsafe_code) scalar oracle on every
+      architecture. If this is genuinely needed, it belongs in accel behind a
+      safe wrapper — see crates/rusty_erasure-accel/UNSAFE.md.
+    paths:
+      include: ["**/crates/**/src/**/*.rs", "**/tools/semgrep-selftest/**"]
+      exclude:
+        - "**/crates/rusty_erasure-accel/**"
+        - "**/crates/rusty_erasure-demo/**" # cdylib export shims, documented
+    pattern-either:
+      - pattern: unsafe { ... }
+      - pattern: unsafe fn $F(...) { ... }
+
+  # A library that declares a global allocator forces the choice on every
+  # consumer and makes two such libraries impossible to link together. It
+  # belongs in the deliverable, through the seam crate (house rule §5).
+  - id: global-allocator-in-library
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      `#[global_allocator]` outside a deliverable. A program may define
+      exactly one; a library declaring it forces the choice on every consumer.
+      Declare it in the binary's main.rs (or the cdylib's lib.rs) via the
+      rusty_erasure-alloc seam.
+    paths:
+      include: ["**/crates/**/src/**/*.rs", "**/tools/semgrep-selftest/**"]
+      exclude:
+        - "**/crates/rusty_erasure-cli/src/main.rs"
+        - "**/crates/rusty_erasure-demo/**"
+        - "**/crates/rusty_erasure-alloc/**"
+    # Regex, not an attribute pattern: semgrep's Rust attribute matching binds
+    # to the *item* the attribute decorates, so `pattern: "#[global_allocator]"`
+    # matched every expression in the file (2160 findings on a clean tree).
+    pattern-regex: '#\[global_allocator\]'
+
+  # Kernel selection runs CPUID and a OnceLock; doing it per iteration turns a
+  # once-per-call dispatch into per-element overhead. The law is: resolve once
+  # at the surface, hold the result.
+  - id: kernel-dispatch-inside-loop
+    languages: [rust]
+    severity: WARNING
+    message: >-
+      Kernel dispatch inside a loop. Resolve the kernel set ONCE at the
+      surface (or build a Coder) and hold it — never re-ask per iteration.
+    paths:
+      include: ["**/crates/**/src/**/*.rs", "**/tools/semgrep-selftest/**"]
+    pattern-either:
+      - patterns:
+          - pattern-inside: |
+              for $X in $ITER { ... }
+          - pattern-either:
+              - pattern: best_kernels()
+              - pattern: kernels_named(...)
+              - pattern: raid_kernels()
+      - patterns:
+          - pattern-inside: |
+              while $C { ... }
+          - pattern-either:
+              - pattern: best_kernels()
+              - pattern: kernels_named(...)
+              - pattern: raid_kernels()
+
+  # Table formats are kernel-private: nibble is 32 bytes/coefficient, GFNI
+  # affine is 8. Feeding one kernel's tables to another produces WRONG PARITY
+  # AT PLAUSIBLE SPEED — the M4 lesson, found only by a checksum column.
+  - id: nibble-tables-into-gfni-kernel
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      Possible mixed table formats: `init_tables` (nibble, 32 B/coeff) paired
+      with a GFNI kernel (affine, 8 B/coeff). Mixing them yields wrong parity
+      at plausible speed and no test that lacks a checksum will catch it.
+      Pair every init with the encode/mad from the SAME kernel set.
+    paths:
+      include: ["**/crates/**/src/**/*.rs", "**/tools/semgrep-selftest/**"]
+    pattern-either:
+      - pattern: |
+          let $G = tables::init_tables(...);
+          ...
+          imp::encode_gfni($G, ...)
+      - pattern: |
+          let $G = tables::init_tables(...);
+          ...
+          imp::mad_gfni($G, ...)
+      - pattern: |
+          let $G = tables::init_tables_gfni(...);
+          ...
+          imp::encode_avx2($G, ...)
+
+  # Erasure parity is not authentication. A comment claiming otherwise in the
+  # public docs would be a security-relevant documentation defect.
+  - id: parity-described-as-authentication
+    languages: [rust]
+    severity: WARNING
+    message: >-
+      Documentation appears to describe parity as authentication or integrity
+      against an adversary. Erasure parity protects against LOSS, not
+      tampering — it is not a MAC. See SECURITY.md.
+    paths:
+      include: ["**/crates/**/src/**/*.rs", "**/tools/semgrep-selftest/**"]
+    pattern-regex: "///.*(parity|checksum).*(authenticat|tamper-proof|MAC\\b)"

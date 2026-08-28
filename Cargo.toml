@@ -21,6 +21,12 @@ rust-version = "1.95"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
+# `kani` is set by the Kani verifier, never by cargo, so it must be declared
+# here or every normal build warns on the proof module's cfg (H-30; see
+# crates/rusty_erasure-core/src/proofs.rs). Declared at the WORKSPACE level
+# because a crate-level `[lints.rust]` REPLACES this whole table rather than
+# merging with it — the trap that left the accel crate unlinted.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
 
 [workspace.lints.clippy]
 undocumented_unsafe_blocks = "deny"
