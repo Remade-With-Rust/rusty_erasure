@@ -39,11 +39,25 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # ubuntu-24.04-arm executes the NEON kernels (M6): the portable
+        # matches-scalar gate is the oracle there; macos-latest is arm64 too.
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
       - run: cargo test --workspace
       - run: cargo test -p rusty_erasure --no-default-features
+
+  test-wasm:
+    # Executes the SIMD128 kernels under wasmtime (M6).
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: -C target-feature=+simd128
+      CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup target add wasm32-wasip1
+      - uses: bytecodealliance/actions/wasmtime/setup@v1
+      - run: cargo test -p rusty_erasure-core -p rusty_erasure-accel -p rusty_erasure --target wasm32-wasip1
 
   lint:
     runs-on: ubuntu-latest

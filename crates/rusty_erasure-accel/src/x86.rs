@@ -5,8 +5,6 @@
 //! Baseline x86-64 is SSE2, which lacks `pshufb`, so even the SSSE3 set is
 //! behind runtime detection; the scalar core is the fallback everywhere.
 
-use core::sync::atomic::AtomicU64;
-
 use rusty_erasure_core::kernel::Kernels;
 
 #[cfg(target_arch = "x86_64")]
@@ -14,9 +12,7 @@ use core::sync::atomic::Ordering;
 #[cfg(target_arch = "x86_64")]
 use rusty_erasure_core::tables::{TABLE_BYTES, table_mul};
 
-/// Census counter for the accel kernel sets: source bytes processed. One
-/// relaxed add per call, never per element.
-pub static ACCEL_CENSUS_BYTES: AtomicU64 = AtomicU64::new(0);
+pub use crate::ACCEL_CENSUS_BYTES;
 
 /// The ISA levels this module can provide.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -129,24 +125,10 @@ fn check_encode(gftbls: &[u8], data: &[&[u8]], out: &[&mut [u8]], table_bytes: u
     len
 }
 
-/// Scalar tail shared by both ISA widths: finish bytes `[i..len)` exactly as
-/// the scalar oracle would.
+/// Scalar tail for the nibble kernels — the arch-shared implementation
+/// (`tail.rs`), so every architecture finishes its tail with the same code.
 #[cfg(target_arch = "x86_64")]
-fn encode_tail(gftbls: &[u8], data: &[&[u8]], out: &mut [&mut [u8]], i: usize) {
-    let k = data.len();
-    for (r, dest) in out.iter_mut().enumerate() {
-        for (x, d) in dest[i..].iter_mut().enumerate() {
-            let mut acc = 0u8;
-            for (j, src) in data.iter().enumerate() {
-                let start = (r * k + j) * TABLE_BYTES;
-                let tbl: &[u8; TABLE_BYTES] =
-                    gftbls[start..start + TABLE_BYTES].try_into().expect("checked");
-                acc ^= table_mul(tbl, src[i + x]);
-            }
-            *d = acc;
-        }
-    }
-}
+use crate::tail::encode_tail_nibble as encode_tail;
 
 #[cfg(target_arch = "x86_64")]
 pub(crate) mod imp {
@@ -462,12 +444,79 @@ pub(crate) mod imp {
         encode_tail_gfni(gftbls, data, out, i);
     }
 
+    /// Register-resident small-stripe variant: `K` and `R` monomorphized
+    /// (`K*R <= 8`) so every matrix stays in a ymm register across the whole
+    /// stripe and the source indexing is bounds-check-free. Motivated by the
+    /// M5 ceiling probe: per-chunk matrix loads dominated the 4 KiB cell.
+    ///
+    /// # Safety
+    /// Caller guarantees GFNI+AVX2, `data.len() == K`, `out.len() == R`,
+    /// equal slice lengths, and `R * K` 8-byte tables in `gftbls`.
+    #[target_feature(enable = "gfni,avx2")]
+    unsafe fn encode_group_gfni_reg<const K: usize, const R: usize>(
+        gftbls: &[u8],
+        data: &[&[u8]],
+        out: &mut [&mut [u8]],
+    ) {
+        let len = out[0].len();
+        let srcs: &[&[u8]; K] = data.try_into().expect("caller guarantees data.len() == K");
+        let mut mats = [_mm256_setzero_si256(); 8];
+        for r in 0..R {
+            for j in 0..K {
+                mats[r * K + j] = _mm256_set1_epi64x(affine_at(gftbls, r * K + j) as i64);
+            }
+        }
+        let mut i = 0usize;
+        while i + 32 <= len {
+            let mut acc = [_mm256_setzero_si256(); R];
+            for (j, src) in srcs.iter().enumerate() {
+                // SAFETY: i + 32 <= len == src.len() (asserted by the wrapper).
+                let s = unsafe { _mm256_loadu_si256(src.as_ptr().add(i) as *const __m256i) };
+                for r in 0..R {
+                    acc[r] = _mm256_xor_si256(acc[r], _mm256_gf2p8affine_epi64_epi8::<0>(s, mats[r * K + j]));
+                }
+            }
+            for r in 0..R {
+                // SAFETY: i + 32 <= len == out[r].len() (asserted).
+                unsafe {
+                    _mm256_storeu_si256(out[r].as_mut_ptr().add(i) as *mut __m256i, acc[r]);
+                }
+            }
+            i += 32;
+        }
+        encode_tail_gfni(gftbls, data, out, i);
+    }
+
     /// Safe wrapper. SAFETY invariant: this fn pointer is only handed out by
     /// `kernels_at` after gfni+avx2 detection, and `check_encode` re-validated
     /// every slice length.
     pub(crate) fn encode_gfni(gftbls: &[u8], data: &[&[u8]], out: &mut [&mut [u8]]) {
         let k = data.len();
         check_encode(gftbls, data, out, tables::GFNI_TABLE_BYTES);
+        // Small-k lane: registers hold all matrices (groups of 2 keep K*R <= 8).
+        if (1..=4).contains(&k) {
+            let mut row = 0usize;
+            while row < out.len() {
+                let g = (out.len() - row).min(2);
+                let tb = &gftbls[row * k * 8..(row + g) * k * 8];
+                let group = &mut out[row..row + g];
+                // SAFETY: see the wrapper doc above; k and g bounds hold by construction.
+                unsafe {
+                    match (k, g) {
+                        (1, 1) => encode_group_gfni_reg::<1, 1>(tb, data, group),
+                        (1, _) => encode_group_gfni_reg::<1, 2>(tb, data, group),
+                        (2, 1) => encode_group_gfni_reg::<2, 1>(tb, data, group),
+                        (2, _) => encode_group_gfni_reg::<2, 2>(tb, data, group),
+                        (3, 1) => encode_group_gfni_reg::<3, 1>(tb, data, group),
+                        (3, _) => encode_group_gfni_reg::<3, 2>(tb, data, group),
+                        (4, 1) => encode_group_gfni_reg::<4, 1>(tb, data, group),
+                        _ => encode_group_gfni_reg::<4, 2>(tb, data, group),
+                    }
+                }
+                row += g;
+            }
+            return;
+        }
         let mut row = 0usize;
         while row < out.len() {
             let g = (out.len() - row).min(4);

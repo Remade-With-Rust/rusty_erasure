@@ -26,7 +26,7 @@ use rusty_erasure_core::{gf, matrix};
 /// whose tables are affine-format (see the module docs on format pairing).
 fn nibble_kernels() -> Kernels {
     #[cfg(feature = "accel")]
-    if let Some(k) = rusty_erasure_accel::x86::kernels_nibble() {
+    if let Some(k) = rusty_erasure_accel::kernels_nibble() {
         return k;
     }
     Kernels::scalar()

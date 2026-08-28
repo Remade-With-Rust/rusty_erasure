@@ -26,7 +26,7 @@ pub use rusty_erasure_core::{
 /// build a [`Coder`] with [`coder`] rather than re-asking in a loop.
 pub fn best_kernels() -> kernel::Kernels {
     #[cfg(feature = "accel")]
-    if let Some(k) = rusty_erasure_accel::x86::kernels() {
+    if let Some(k) = rusty_erasure_accel::kernels() {
         return k;
     }
     kernel::Kernels::scalar()
@@ -52,6 +52,10 @@ pub fn kernels_named(name: &str) -> Option<kernel::Kernels> {
         "avx2" => rusty_erasure_accel::x86::kernels_at(rusty_erasure_accel::x86::Level::Avx2),
         #[cfg(feature = "accel")]
         "gfni" => rusty_erasure_accel::x86::kernels_at(rusty_erasure_accel::x86::Level::Gfni),
+        #[cfg(feature = "accel")]
+        "neon" => rusty_erasure_accel::aarch64::kernels(),
+        #[cfg(feature = "accel")]
+        "simd128" => rusty_erasure_accel::wasm::kernels(),
         _ => None,
     }
 }
