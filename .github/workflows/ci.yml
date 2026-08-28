@@ -98,7 +98,26 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - run: rustup toolchain install nightly --component miri
+
+      # Our own crates: validation, typed errors, the scalar oracle.
       - run: cargo +nightly miri test -p rusty_erasure-core -p rusty_erasure
+
+      # The unsafe crate, with the SIMD actually REACHED.
+      #
+      # Without the explicit target-feature, `is_x86_feature_detected!` returns
+      # false under Miri, dispatch falls back to scalar, and this gate passes
+      # green while never executing a single line of the unsafe code it exists
+      # to check — the same "fast path nothing calls" failure mode, applied to
+      # a safety gate. Verified: the run prints `testing x86_64/avx2`.
+      #
+      # GFNI is deliberately NOT enabled: Miri has no model for
+      # GF2P8AFFINEQB, so requesting it aborts the run rather than checking
+      # anything. Those kernels are covered by ASan fuzzing and the Kani
+      # offset proofs instead.
+      - name: miri over the SIMD kernels
+        env:
+          RUSTFLAGS: -C target-feature=+ssse3,+avx2
+        run: cargo +nightly miri test -p rusty_erasure-accel --test portable_matches_scalar
 
   # Repo-specific pattern rules beyond clippy (H-22): unsafe outside the one
   # sanctioned crate, a global allocator in a library, kernel dispatch inside

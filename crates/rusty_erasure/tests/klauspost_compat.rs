@@ -9,6 +9,16 @@
 //!
 //! With this proven, the swap is a drop-in with zero wire-format break — old
 //! snapshots decode, new snapshots read back on old code.
+//!
+//! **Skipped under Miri, deliberately.** These tests execute
+//! `reed-solomon-erasure` 6.0.0, whose `galois_8::mul_slice_pure_rust` raw-
+//! pointer loop violates Stacked Borrows (`galois_8.rs:166` — a read through a
+//! pointer whose tag is no longer live). That is a defect in the oracle crate,
+//! not in ours: our frames do not appear in the unsafe path at all, and the
+//! crate is a dev-dependency that reaches no shipped artifact. Running Miri
+//! over it turned the whole CI job red while telling us nothing about this
+//! codebase, so each test carries `cfg_attr(miri, ignore)` and Miri covers our
+//! own code — which is what that gate is for.
 
 use reed_solomon_erasure::galois_8::ReedSolomon;
 use rusty_erasure::{Coder, coder, compat};
@@ -36,6 +46,10 @@ const CONFIGS: &[(usize, usize)] = &[(2, 1), (2, 2), (4, 2), (10, 4), (16, 8), (
 const LENS: &[usize] = &[1, 31, 64, 1024, 4113];
 
 #[test]
+#[cfg_attr(
+    miri,
+    ignore = "UB lives in reed-solomon-erasure 6.0.0, not here — see module docs"
+)]
 fn our_encode_is_byte_identical_to_reed_solomon_erasure() {
     let mut rng = Rng(0xC047_0001);
     for &(k, p) in CONFIGS {
@@ -65,6 +79,10 @@ fn our_encode_is_byte_identical_to_reed_solomon_erasure() {
 }
 
 #[test]
+#[cfg_attr(
+    miri,
+    ignore = "UB lives in reed-solomon-erasure 6.0.0, not here — see module docs"
+)]
 fn we_reconstruct_their_stripes_through_parity() {
     let mut rng = Rng(0xC047_0002);
     for &(k, p) in CONFIGS {
@@ -108,6 +126,10 @@ fn we_reconstruct_their_stripes_through_parity() {
 }
 
 #[test]
+#[cfg_attr(
+    miri,
+    ignore = "UB lives in reed-solomon-erasure 6.0.0, not here — see module docs"
+)]
 fn they_reconstruct_our_stripes() {
     let mut rng = Rng(0xC047_0003);
     for &(k, p) in CONFIGS {

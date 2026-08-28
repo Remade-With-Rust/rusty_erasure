@@ -63,6 +63,47 @@ jobs:
           name: fuzz-artifacts-${{ matrix.target }}
           path: fuzz/artifacts/${{ matrix.target }}/
 
+  # ASan over the NEON kernels — the gap that made the memory-safety evidence
+  # asymmetric across architectures.
+  #
+  # The catastrophic failure for this library is a kernel fault that changes no
+  # output byte: the byte-identity oracles structurally cannot see it, and ASan
+  # is what does. Running libFuzzer only on x86 meant NEON — the newest unsafe
+  # code in the tree — had corpus replay and a seeded sweep but no sanitizer at
+  # all. libFuzzer does support aarch64, and GitHub now has arm runners, so
+  # there was no reason for the gap other than nobody asking for it.
+  fuzz-arm-asan:
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        # The kernel-facing targets: these are the ones whose unsafe differs by
+        # architecture. The matrix ones are pure safe arithmetic and identical
+        # everywhere, so x86 coverage of them carries over.
+        target: [raid, kernels, roundtrip, compat]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - run: rustup toolchain install nightly
+      - uses: taiki-e/install-action@37f7c5781271959fb65b6b35224e28652ff2b63d # v2
+        with:
+          tool: cargo-fuzz
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-arm-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-arm-${{ matrix.target }}-
+      - name: ASan fuzz ${{ matrix.target }} on aarch64
+        run: |
+          mins="${{ github.event.inputs.minutes || '20' }}"
+          cargo +nightly fuzz run ${{ matrix.target }} -- \
+            -max_total_time=$((mins * 60)) -print_final_stats=1
+      - name: upload reproducers
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fuzz-arm-artifacts-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}/
+
   # The architectures libFuzzer cannot reach get their own randomized run,
   # at a scale a laptop `cargo test` would not tolerate. Replay covers what
   # x86 discovered; this covers what x86 never thought to try.
