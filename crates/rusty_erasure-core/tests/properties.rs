@@ -42,9 +42,17 @@ fn every_nonzero_element_has_a_true_inverse() {
     assert_eq!(gf::inv(0), 0, "ISA-L behavior: inv(0) == 0");
 }
 
+/// Sweep sizes shrink under Miri (interpreter speed): every code path still
+/// runs; the exhaustive/native sizes are the real gates.
+const fn miri_scaled(native: usize, miri: usize) -> usize {
+    if cfg!(miri) { miri } else { native }
+}
+
 #[test]
 fn multiplication_is_commutative_and_distributive_exhaustively() {
-    for a in 0..=255u8 {
+    let step = miri_scaled(1, 37);
+    for a in (0..=255usize).step_by(step) {
+        let a = a as u8;
         for b in 0..=255u8 {
             assert_eq!(gf::mul(a, b), gf::mul(b, a));
             for c in [0u8, 1, 2, 0x1d, 0x80, 0xff, a ^ b] {
@@ -61,7 +69,7 @@ fn multiplication_is_commutative_and_distributive_exhaustively() {
 #[test]
 fn multiplication_is_associative_on_a_dense_sample() {
     let mut rng = Rng(0xE7A5_0001);
-    for _ in 0..200_000 {
+    for _ in 0..miri_scaled(200_000, 2_000) {
         let (a, b, c) = (rng.next() as u8, rng.next() as u8, rng.next() as u8);
         assert_eq!(
             gf::mul(gf::mul(a, b), c),
@@ -76,9 +84,11 @@ fn cauchy_every_sampled_recovery_submatrix_inverts() {
     // The property Cauchy exists to guarantee: ANY k surviving rows form an
     // invertible decode matrix. Sampled across the corpus config grid.
     let mut rng = Rng(0xCAFE_0002);
-    for &(k, p) in &[(4usize, 2usize), (8, 2), (10, 4), (16, 4), (20, 8), (32, 8), (64, 8)] {
+    let configs: &[(usize, usize)] =
+        if cfg!(miri) { &[(4, 2), (8, 2)] } else { &[(4, 2), (8, 2), (10, 4), (16, 4), (20, 8), (32, 8), (64, 8)] };
+    for &(k, p) in configs {
         let m = Matrix::cauchy(k, p).unwrap();
-        for round in 0..200 {
+        for round in 0..miri_scaled(200, 3) {
             let rows = rng.subset(k, k + p);
             let sub = m.select_rows(&rows).unwrap();
             let inv = sub
@@ -94,9 +104,11 @@ fn vandermonde_safe_region_sampled_submatrices_invert() {
     // Inside the documented safe region the same property must hold — that is
     // what "safe" means.
     let mut rng = Rng(0xBEEF_0003);
-    for &(k, p) in &[(3usize, 20usize), (4, 21), (5, 5), (10, 4), (21, 4), (15, 3)] {
+    let configs: &[(usize, usize)] =
+        if cfg!(miri) { &[(5, 5), (10, 4)] } else { &[(3, 20), (4, 21), (5, 5), (10, 4), (21, 4), (15, 3)] };
+    for &(k, p) in configs {
         let m = Matrix::reed_solomon(k, p).unwrap();
-        for round in 0..200 {
+        for round in 0..miri_scaled(200, 3) {
             let rows = rng.subset(k, k + p);
             let sub = m.select_rows(&rows).unwrap();
             let inv = sub
@@ -124,8 +136,9 @@ fn singular_matrices_report_singular_not_garbage() {
 fn random_square_matrices_invert_or_report_singular_never_panic() {
     let mut rng = Rng(0x5EED_0004);
     let mut inverted = 0u32;
-    for _ in 0..500 {
-        let n = 1 + rng.below(32);
+    let rounds = miri_scaled(500, 20);
+    for _ in 0..rounds {
+        let n = 1 + rng.below(miri_scaled(32, 8));
         let data: Vec<u8> = (0..n * n).map(|_| rng.next() as u8).collect();
         let m = Matrix::from_bytes(n, n, data).unwrap();
         if let Ok(inv) = m.invert() {
@@ -135,7 +148,7 @@ fn random_square_matrices_invert_or_report_singular_never_panic() {
     }
     // Random matrices over GF(2^8) are overwhelmingly invertible; if this is
     // ever low the test went vacuous, not the math wrong.
-    assert!(inverted > 400, "only {inverted}/500 inverted — probe broken?");
+    assert!(inverted as usize > rounds * 4 / 5, "only {inverted}/{rounds} inverted — probe broken?");
 }
 
 #[test]

@@ -13,6 +13,8 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+pub mod isal;
+
 pub use rusty_erasure_core::{Coder, CodeError, Matrix, MatrixError, RecoverError, gf, kernel, matrix, tables};
 
 // The accel dependency edge exists from M0 so the feature graph and the

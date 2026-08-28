@@ -76,6 +76,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
+name = "rusty_erasure"
+version = "0.1.0"
+dependencies = [
+ "rusty_erasure-accel",
+ "rusty_erasure-core",
+]
+
+[[package]]
+name = "rusty_erasure-accel"
+version = "0.1.0"
+dependencies = [
+ "rusty_erasure-core",
+]
+
+[[package]]
 name = "rusty_erasure-core"
 version = "0.1.0"
 
@@ -84,6 +99,7 @@ name = "rusty_erasure-fuzz"
 version = "0.0.0"
 dependencies = [
  "libfuzzer-sys",
+ "rusty_erasure",
  "rusty_erasure-core",
 ]
 

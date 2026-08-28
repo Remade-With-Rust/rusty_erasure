@@ -155,49 +155,7 @@ impl Matrix {
         let n = self.rows;
         let mut a = self.data.clone();
         let mut out = vec![0u8; n * n];
-        for i in 0..n {
-            out[n * i + i] = 1;
-        }
-
-        for i in 0..n {
-            if a[n * i + i] == 0 {
-                // Find a lower row with a non-zero in this column and swap.
-                let mut pivot = None;
-                for j in i + 1..n {
-                    if a[n * j + i] != 0 {
-                        pivot = Some(j);
-                        break;
-                    }
-                }
-                let Some(j) = pivot else {
-                    return Err(MatrixError::Singular);
-                };
-                for c in 0..n {
-                    a.swap(n * i + c, n * j + c);
-                    out.swap(n * i + c, n * j + c);
-                }
-            }
-
-            let scale = gf::inv(a[n * i + i]);
-            for c in 0..n {
-                a[n * i + c] = gf::mul(a[n * i + c], scale);
-                out[n * i + c] = gf::mul(out[n * i + c], scale);
-            }
-
-            for j in 0..n {
-                if j == i {
-                    continue;
-                }
-                let f = a[n * j + i];
-                if f == 0 {
-                    continue;
-                }
-                for c in 0..n {
-                    out[n * j + c] ^= gf::mul(f, out[n * i + c]);
-                    a[n * j + c] ^= gf::mul(f, a[n * i + c]);
-                }
-            }
-        }
+        invert_gauss_jordan(&mut a, &mut out, n)?;
         Ok(Self { rows: n, cols: n, data: out })
     }
 
@@ -230,3 +188,59 @@ impl Matrix {
                 .all(|(idx, &v)| v == u8::from(idx / self.cols == idx % self.cols))
     }
 }
+
+/// The raw Gauss-Jordan inversion under [`Matrix::invert`] and the compat
+/// layer's `gf_invert_matrix` — ISA-L semantics: `a` (row-major `n x n`) is
+/// DESTROYED (reduced to the identity on success), `out` receives the inverse,
+/// and a singular input is a typed error. Slice lengths must be `n * n`.
+pub fn invert_gauss_jordan(a: &mut [u8], out: &mut [u8], n: usize) -> Result<(), MatrixError> {
+    if n == 0 || !n.checked_mul(n).is_some_and(|nn| a.len() == nn && out.len() == nn) {
+        return Err(MatrixError::Dimensions { k: n, p: 0 });
+    }
+    out.fill(0);
+    for i in 0..n {
+        out[n * i + i] = 1;
+    }
+
+    for i in 0..n {
+        if a[n * i + i] == 0 {
+            // Find a lower row with a non-zero in this column and swap.
+            let mut pivot = None;
+            for j in i + 1..n {
+                if a[n * j + i] != 0 {
+                    pivot = Some(j);
+                    break;
+                }
+            }
+            let Some(j) = pivot else {
+                return Err(MatrixError::Singular);
+            };
+            for c in 0..n {
+                a.swap(n * i + c, n * j + c);
+                out.swap(n * i + c, n * j + c);
+            }
+        }
+
+        let scale = gf::inv(a[n * i + i]);
+        for c in 0..n {
+            a[n * i + c] = gf::mul(a[n * i + c], scale);
+            out[n * i + c] = gf::mul(out[n * i + c], scale);
+        }
+
+        for j in 0..n {
+            if j == i {
+                continue;
+            }
+            let f = a[n * j + i];
+            if f == 0 {
+                continue;
+            }
+            for c in 0..n {
+                out[n * j + c] ^= gf::mul(f, out[n * i + c]);
+                a[n * j + c] ^= gf::mul(f, a[n * i + c]);
+            }
+        }
+    }
+    Ok(())
+}
+

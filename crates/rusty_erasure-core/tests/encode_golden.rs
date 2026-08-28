@@ -33,6 +33,10 @@ impl<'a> Cursor<'a> {
 }
 
 #[test]
+#[cfg_attr(
+    miri,
+    ignore = "77-case byte-identity replay is deterministic and UB-free; too slow interpreted"
+)]
 fn encode_tables_and_update_match_isal_vectors() {
     let mut c = Cursor { buf: VECTORS, pos: 0 };
     assert_eq!(c.take(4), b"REV1", "vector file magic");

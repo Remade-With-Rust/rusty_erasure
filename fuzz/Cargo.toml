@@ -10,6 +10,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 rusty_erasure-core = { path = "../crates/rusty_erasure-core" }
+rusty_erasure = { path = "../crates/rusty_erasure" }
 
 [[bin]]
 name = "matrix_gen"
@@ -28,6 +29,13 @@ bench = false
 [[bin]]
 name = "roundtrip"
 path = "fuzz_targets/roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "compat"
+path = "fuzz_targets/compat.rs"
 test = false
 doc = false
 bench = false

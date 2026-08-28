@@ -66,15 +66,22 @@ fn check_recovery(s: &Stripe, missing: &[usize]) {
 #[test]
 fn roundtrip_verify_and_sampled_recovery_across_the_grid() {
     let mut rng = Rng(0x0002_0001);
-    for &(k, p) in &[(2usize, 2usize), (4, 2), (8, 2), (10, 4), (16, 4), (20, 8), (32, 8)] {
-        for &len in &[1usize, 31, 32, 33, 96, 1024] {
+    let configs: &[(usize, usize)] = if cfg!(miri) {
+        &[(2, 2), (4, 2)]
+    } else {
+        &[(2, 2), (4, 2), (8, 2), (10, 4), (16, 4), (20, 8), (32, 8)]
+    };
+    let lens: &[usize] = if cfg!(miri) { &[1, 33] } else { &[1, 31, 32, 33, 96, 1024] };
+    let patterns = if cfg!(miri) { 3 } else { 20 };
+    for &(k, p) in configs {
+        for &len in lens {
             let s = stripe(Coder::new(Matrix::cauchy(k, p).unwrap()).unwrap(), len, &mut rng);
             let drefs: Vec<&[u8]> = s.data.iter().map(|d| d.as_slice()).collect();
             let prefs: Vec<&[u8]> = s.parity.iter().map(|b| b.as_slice()).collect();
             assert_eq!(s.coder.verify(&drefs, &prefs), Ok(true), "verify k={k} p={p} len={len}");
 
-            // 20 random loss patterns of size 1..=p across the whole stripe.
-            for _ in 0..20 {
+            // Random loss patterns of size 1..=p across the whole stripe.
+            for _ in 0..patterns {
                 let nloss = 1 + rng.below(p);
                 let mut missing: Vec<usize> = Vec::new();
                 while missing.len() < nloss {
@@ -91,6 +98,7 @@ fn roundtrip_verify_and_sampled_recovery_across_the_grid() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "1470-pattern sweep is deterministic and UB-free; too slow interpreted")]
 fn exhaustive_loss_patterns_on_the_s6_config() {
     // ERASCORP S6: (10, 4). EVERY loss pattern of size 1..=4 over the 14
     // shards — 1470 patterns — rebuilt in full and compared to ground truth.
@@ -129,8 +137,10 @@ fn exhaustive_loss_patterns_on_the_s6_config() {
 #[test]
 fn update_in_any_order_equals_one_shot_encode() {
     let mut rng = Rng(0x0002_0003);
-    for &(k, p) in &[(4usize, 2usize), (10, 4), (16, 4)] {
-        let len = 513;
+    let configs: &[(usize, usize)] =
+        if cfg!(miri) { &[(4, 2)] } else { &[(4, 2), (10, 4), (16, 4)] };
+    for &(k, p) in configs {
+        let len = if cfg!(miri) { 65 } else { 513 };
         let s = stripe(Coder::new(Matrix::cauchy(k, p).unwrap()).unwrap(), len, &mut rng);
         for _ in 0..5 {
             // Random permutation of the update order.
