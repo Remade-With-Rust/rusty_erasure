@@ -1,0 +1,25 @@
+[package]
+name = "rusty_erasure"
+description = "Intel ISA-L's erasure coding, remade with Rust: matrix-flexible GF(2^8) Reed-Solomon encode, incremental update, and recovery. Safe core, validated parameters, no C, no GPL."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+readme = "../../README.md"
+keywords = ["erasure-coding", "reed-solomon", "raid", "storage", "isa-l"]
+categories = ["algorithms", "encoding", "no-std"]
+
+[lints]
+workspace = true
+
+[features]
+default = ["accel"]
+# SIMD kernels + runtime dispatch. `--no-default-features` is the pure scalar
+# build (100% safe, every target) and is a standing CI gate.
+accel = ["dep:rusty_erasure-accel"]
+
+[dependencies]
+rusty_erasure-core.workspace = true
+rusty_erasure-accel = { workspace = true, optional = true }

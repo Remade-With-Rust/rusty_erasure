@@ -1,0 +1,20 @@
+[package]
+name = "rusty_erasure-accel"
+description = "SIMD twins of rusty_erasure-core's scalar kernels: x86-64 SSSE3/AVX2 (GFNI/AVX-512, NEON, wasm SIMD128 to follow). The workspace's only unsafe crate."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+keywords = ["erasure-coding", "simd", "avx2", "galois-field", "isa-l"]
+categories = ["algorithms", "encoding", "hardware-support"]
+
+# Deliberately NOT `workspace = true`: the workspace denies unsafe_code, and this
+# crate is the single sanctioned exception (mission plan §4). Every unsafe block
+# carries a `// SAFETY:` invariant and an adversarially-reviewed bounds argument.
+[lints.rust]
+unsafe_code = "allow"
+
+[dependencies]
+rusty_erasure-core.workspace = true

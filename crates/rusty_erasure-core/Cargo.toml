@@ -1,0 +1,16 @@
+[package]
+name = "rusty_erasure-core"
+description = "GF(2^8) arithmetic, coding matrices, and the scalar erasure-coding kernels for rusty_erasure. no_std + alloc, zero dependencies, forbid(unsafe)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+keywords = ["erasure-coding", "reed-solomon", "galois-field", "no-std", "isa-l"]
+categories = ["algorithms", "encoding", "no-std"]
+
+[lints]
+workspace = true
+
+[dependencies]

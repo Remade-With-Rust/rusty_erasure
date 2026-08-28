@@ -1,0 +1,31 @@
+[workspace]
+resolver = "2"
+exclude = ["fuzz"]
+members = [
+    "crates/rusty_erasure-core",
+    "crates/rusty_erasure-accel",
+    "crates/rusty_erasure",
+    "crates/rusty_erasure-cli",
+    "crates/rusty_erasure-alloc",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/remade-with-rust/rusty_erasure"
+homepage = "https://www.mata.network/"
+rust-version = "1.95"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.dependencies]
+rusty_erasure-core = { path = "crates/rusty_erasure-core", version = "0.1.0" }
+rusty_erasure-accel = { path = "crates/rusty_erasure-accel", version = "0.1.0" }
+rusty_erasure = { path = "crates/rusty_erasure", version = "0.1.0" }
+rusty_erasure-alloc = { path = "crates/rusty_erasure-alloc", version = "0.1.0" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

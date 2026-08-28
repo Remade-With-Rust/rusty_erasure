@@ -1,0 +1,21 @@
+[package]
+name = "rusty_erasure-cli"
+description = "rerasure — the rusty_erasure CLI: encode, recover, verify, bench, and the kernel-reach census."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+publish = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "rerasure"
+path = "src/main.rs"
+
+[dependencies]
+rusty_erasure.workspace = true
+rusty_erasure-alloc.workspace = true

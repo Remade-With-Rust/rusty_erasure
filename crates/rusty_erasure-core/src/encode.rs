@@ -1,0 +1,270 @@
+//! The `Coder`: encode, incremental update, verify, and recover — ISA-L's
+//! `ec_encode_data` / `ec_encode_data_update` semantics plus the recovery flow
+//! ISA-L leaves as an exercise, all behind validated, panic-free APIs.
+//!
+//! Conformance: `encode` and `update` are byte-identical to ISA-L's `_base`
+//! implementations (golden-vector gated); a completed `update` sequence is
+//! byte-identical to one-shot `encode`; `recover` is gated against ground
+//! truth (the original shards ARE the expected output).
+
+use alloc::vec;
+use alloc::vec::Vec;
+
+use crate::error::{CodeError, MatrixError, RecoverError};
+use crate::kernel;
+use crate::matrix::Matrix;
+use crate::tables::{self, TABLE_BYTES};
+
+/// An erasure coder for one `(matrix)` configuration: `k` source shards in,
+/// `p` parity shards out, recovery from any `k` survivors.
+///
+/// Construction expands the parity coefficients into ISA-L-layout tables once;
+/// encode/update/recover then run with zero allocations on the data path
+/// (recover allocates only its small decode-matrix scratch).
+#[derive(Debug, Clone)]
+pub struct Coder {
+    matrix: Matrix,
+    /// Expanded tables for the parity rows: `p * k * 32` bytes, row-major —
+    /// table for (parity row `l`, source `j`) at `(l*k + j) * 32`.
+    gftbls: Vec<u8>,
+}
+
+impl Coder {
+    /// Build a coder from an encode matrix (`rows = k + p`, `cols = k`, top
+    /// block identity — what [`Matrix::reed_solomon`] / [`Matrix::cauchy`]
+    /// produce). A matrix with no parity rows is a dimension error.
+    pub fn new(matrix: Matrix) -> Result<Self, MatrixError> {
+        if matrix.rows() <= matrix.cols() {
+            return Err(MatrixError::Dimensions {
+                k: matrix.cols(),
+                p: matrix.rows().saturating_sub(matrix.cols()),
+            });
+        }
+        let gftbls = tables::init_tables(matrix.parity_bytes());
+        Ok(Self { matrix, gftbls })
+    }
+
+    /// Source-shard count.
+    pub fn k(&self) -> usize {
+        self.matrix.cols()
+    }
+
+    /// Parity-shard count.
+    pub fn p(&self) -> usize {
+        self.matrix.rows() - self.matrix.cols()
+    }
+
+    /// The encode matrix this coder was built from.
+    pub fn matrix(&self) -> &Matrix {
+        &self.matrix
+    }
+
+    /// The expanded parity tables (ISA-L `gftbls` layout) — exposed for the
+    /// compat layer and the conformance tests.
+    pub fn gftbls(&self) -> &[u8] {
+        &self.gftbls
+    }
+
+    fn check_data(&self, data: &[&[u8]], len: usize) -> Result<(), CodeError> {
+        if data.len() != self.k() {
+            return Err(CodeError::ShardCount { expected: self.k(), got: data.len() });
+        }
+        for (index, d) in data.iter().enumerate() {
+            if d.len() != len {
+                return Err(CodeError::ShardLength { index, expected: len, got: d.len() });
+            }
+        }
+        Ok(())
+    }
+
+    /// Encode: `k` equal-length source shards in, `p` parity shards out
+    /// (overwritten). Byte-identical to ISA-L `ec_encode_data`.
+    pub fn encode(&self, data: &[&[u8]], parity: &mut [&mut [u8]]) -> Result<(), CodeError> {
+        if parity.len() != self.p() {
+            return Err(CodeError::ShardCount { expected: self.p(), got: parity.len() });
+        }
+        let len = parity.first().map_or(0, |b| b.len());
+        for (index, b) in parity.iter().enumerate() {
+            if b.len() != len {
+                return Err(CodeError::ShardLength {
+                    index: self.k() + index,
+                    expected: len,
+                    got: b.len(),
+                });
+            }
+        }
+        self.check_data(data, len)?;
+        let k = self.k();
+        for (l, out) in parity.iter_mut().enumerate() {
+            kernel::vect_dot_prod(out, &self.gftbls[l * k * TABLE_BYTES..(l + 1) * k * TABLE_BYTES], data)?;
+        }
+        Ok(())
+    }
+
+    /// Incremental encode: fold ONE source shard (index `shard_index`) into
+    /// all parity shards. Starting from zeroed parity buffers and calling this
+    /// once per source (any order) yields byte-identical output to
+    /// [`Coder::encode`] — ISA-L `ec_encode_data_update` semantics.
+    pub fn update(
+        &self,
+        shard_index: usize,
+        data: &[u8],
+        parity: &mut [&mut [u8]],
+    ) -> Result<(), CodeError> {
+        let k = self.k();
+        if shard_index >= k {
+            return Err(CodeError::ShardIndex { index: shard_index, k });
+        }
+        if parity.len() != self.p() {
+            return Err(CodeError::ShardCount { expected: self.p(), got: parity.len() });
+        }
+        for (index, b) in parity.iter().enumerate() {
+            if b.len() != data.len() {
+                return Err(CodeError::ShardLength {
+                    index: k + index,
+                    expected: data.len(),
+                    got: b.len(),
+                });
+            }
+        }
+        for (l, out) in parity.iter_mut().enumerate() {
+            let start = (l * k + shard_index) * TABLE_BYTES;
+            let tbl: &[u8; TABLE_BYTES] = self.gftbls[start..start + TABLE_BYTES]
+                .try_into()
+                .expect("gftbls sized at construction");
+            kernel::vect_mad(out, tbl, data)?;
+        }
+        Ok(())
+    }
+
+    /// Check that `parity` is consistent with `data`. `Ok(true)` means every
+    /// parity shard matches a fresh encode.
+    pub fn verify(&self, data: &[&[u8]], parity: &[&[u8]]) -> Result<bool, CodeError> {
+        if parity.len() != self.p() {
+            return Err(CodeError::ShardCount { expected: self.p(), got: parity.len() });
+        }
+        let len = parity.first().map_or(0, |b| b.len());
+        for (index, b) in parity.iter().enumerate() {
+            if b.len() != len {
+                return Err(CodeError::ShardLength {
+                    index: self.k() + index,
+                    expected: len,
+                    got: b.len(),
+                });
+            }
+        }
+        self.check_data(data, len)?;
+        let k = self.k();
+        let mut scratch = vec![0u8; len];
+        for (l, expect) in parity.iter().enumerate() {
+            kernel::vect_dot_prod(
+                &mut scratch,
+                &self.gftbls[l * k * TABLE_BYTES..(l + 1) * k * TABLE_BYTES],
+                data,
+            )?;
+            if scratch.as_slice() != *expect {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Rebuild shards from survivors.
+    ///
+    /// `shards` is the full stripe in index order — `k` sources then `p`
+    /// parity — with `None` for anything lost. `rebuild` names the shard
+    /// indices to reconstruct (source or parity), and `out` supplies one
+    /// equal-length buffer per rebuild target. Any `k` present shards suffice;
+    /// fewer is [`RecoverError::TooManyMissing`].
+    pub fn recover(
+        &self,
+        shards: &[Option<&[u8]>],
+        rebuild: &[usize],
+        out: &mut [&mut [u8]],
+    ) -> Result<(), RecoverError> {
+        let k = self.k();
+        let n = self.matrix.rows();
+        if shards.len() != n {
+            return Err(CodeError::ShardCount { expected: n, got: shards.len() }.into());
+        }
+        if rebuild.len() != out.len() {
+            return Err(CodeError::ShardCount { expected: rebuild.len(), got: out.len() }.into());
+        }
+        for &x in rebuild {
+            if x >= n {
+                return Err(CodeError::ShardIndex { index: x, k: n }.into());
+            }
+        }
+
+        // Survivors: the first k present shards, in index order.
+        let mut survivors: Vec<usize> = Vec::with_capacity(k);
+        let mut present = 0usize;
+        for (i, s) in shards.iter().enumerate() {
+            if s.is_some() {
+                present += 1;
+                if survivors.len() < k {
+                    survivors.push(i);
+                }
+            }
+        }
+        if survivors.len() < k {
+            return Err(RecoverError::TooManyMissing { missing: n - present, p: self.p() });
+        }
+
+        // Shard length agreement across every present shard and output buffer.
+        let len = shards[survivors[0]].expect("survivor is present").len();
+        for (index, s) in shards.iter().enumerate() {
+            if let Some(s) = s {
+                if s.len() != len {
+                    return Err(
+                        CodeError::ShardLength { index, expected: len, got: s.len() }.into()
+                    );
+                }
+            }
+        }
+        for (i, b) in out.iter().enumerate() {
+            if b.len() != len {
+                return Err(
+                    CodeError::ShardLength { index: rebuild[i], expected: len, got: b.len() }
+                        .into(),
+                );
+            }
+        }
+
+        // Decode matrix: invert the survivors' rows. d maps survivor shard
+        // values back to the original sources.
+        let b = self.matrix.select_rows(&survivors)?;
+        let d = b.invert()?;
+
+        let src: Vec<&[u8]> = survivors
+            .iter()
+            .map(|&i| shards[i].expect("survivor is present"))
+            .collect();
+
+        let mut coeffs = vec![0u8; k];
+        for (&x, buf) in rebuild.iter().zip(out.iter_mut()) {
+            if x < k {
+                // Missing source: row x of the inverse maps survivors -> source x.
+                for t in 0..k {
+                    coeffs[t] = d.get(x, t).expect("in range");
+                }
+            } else {
+                // Missing parity: compose the parity row with the inverse so a
+                // single pass over the survivors rebuilds it directly.
+                for t in 0..k {
+                    let mut s = 0u8;
+                    for j in 0..k {
+                        s ^= crate::gf::mul(
+                            self.matrix.get(x, j).expect("in range"),
+                            d.get(j, t).expect("in range"),
+                        );
+                    }
+                    coeffs[t] = s;
+                }
+            }
+            let gftbls = tables::init_tables(&coeffs);
+            kernel::vect_dot_prod(buf, &gftbls, &src)?;
+        }
+        Ok(())
+    }
+}
