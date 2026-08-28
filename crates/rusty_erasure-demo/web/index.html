@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rusty_erasure — erasure coding in your browser</title>
+<style>
+  :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+  body { max-width: 40rem; margin: 3rem auto; padding: 0 1rem; line-height: 1.5; }
+  code, td.num { font-family: ui-monospace, monospace; }
+  table { border-collapse: collapse; margin: 1rem 0; }
+  td, th { padding: .3rem .8rem; border-bottom: 1px solid color-mix(in srgb, currentColor 25%, transparent); text-align: left; }
+  .pass { color: #188038; } .fail { color: #d93025; }
+</style>
+</head>
+<body>
+<h1>rusty_erasure</h1>
+<p>Reed–Solomon erasure coding running <em>in this page</em>: encode a stripe,
+lose shards, recover them — pure Rust compiled to WebAssembly, no server.
+Kernel set: <code id="kernel">…</code></p>
+<table id="results"><tr><th>stripe</th><th>lost</th><th>recovered</th><th>encode</th></tr></table>
+<p><small>Build: <code>RUSTFLAGS="-C target-feature=+simd128" cargo build --release
+-p rusty_erasure-demo --target wasm32-unknown-unknown</code>, then serve this
+directory with the <code>.wasm</code> beside it.</small></p>
+<script type="module">
+const { instance } = await WebAssembly.instantiateStreaming(
+  fetch("./rusty_erasure_demo.wasm"), {});
+const e = instance.exports;
+
+const name = new TextDecoder().decode(new Uint8Array(
+  e.memory.buffer, e.demo_kernel_name_ptr(), e.demo_kernel_name_len()));
+document.getElementById("kernel").textContent = name;
+
+const cells = [[4, 2, 4096, 2], [10, 4, 65536, 4], [10, 4, 1048576, 3]];
+for (const [k, p, len, drop] of cells) {
+  const ok = e.demo_roundtrip(k, p, len, drop) === 0;
+  const reps = Math.max(1, Math.floor(50e6 / (k * len)));
+  const t0 = performance.now();
+  e.demo_bench(k, p, len, reps);
+  const mbps = (k * len * reps) / ((performance.now() - t0) / 1e3) / 1e6;
+  const row = document.getElementById("results").insertRow();
+  row.innerHTML = `<td>${k}+${p} × ${len.toLocaleString()} B</td><td>${drop}</td>` +
+    `<td class="${ok ? "pass" : "fail"}">${ok ? "recovered ✓" : "FAILED"}</td>` +
+    `<td class="num">${mbps.toFixed(0)} MB/s</td>`;
+}
+</script>
+</body>
+</html>

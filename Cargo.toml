@@ -7,6 +7,7 @@ members = [
     "crates/rusty_erasure",
     "crates/rusty_erasure-cli",
     "crates/rusty_erasure-alloc",
+    "crates/rusty_erasure-demo",
 ]
 
 [workspace.package]

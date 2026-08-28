@@ -27,6 +27,7 @@ fn best_arch_kernels_match_scalar() {
         return;
     };
     eprintln!("testing {}", simd.name);
+    let census_before = simd.census.load(core::sync::atomic::Ordering::Relaxed);
     let scalar = Kernels::scalar();
     let mut rng = Rng(0x9047_AB1E);
     for &len in &[0usize, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 96, 255, 1024, 4113] {
@@ -60,4 +61,9 @@ fn best_arch_kernels_match_scalar() {
             assert_eq!(ma, mb, "{} mad len={len}", simd.name);
         }
     }
+    // The per-arch reach census: this arch's SIMD set must have counted the
+    // bytes it just processed (an uncounted kernel is invisible to the
+    // shipping census — the rusty_zstd law).
+    let census_after = simd.census.load(core::sync::atomic::Ordering::Relaxed);
+    assert!(census_after > census_before, "{}: census did not advance", simd.name);
 }

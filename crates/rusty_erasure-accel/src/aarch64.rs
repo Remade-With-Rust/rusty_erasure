@@ -49,33 +49,33 @@ pub(crate) mod imp {
     ) {
         let k = data.len();
         let len = out[0].len();
-        let mask = vdupq_n_u8(0x0f);
         let mut i = 0usize;
-        while i + 16 <= len {
-            let mut acc = [vdupq_n_u8(0); R];
-            for (j, src) in data.iter().enumerate() {
-                // SAFETY: i + 16 <= len == src.len() (asserted by the wrapper).
-                let s = unsafe { vld1q_u8(src.as_ptr().add(i)) };
-                let lo = vandq_u8(s, mask);
-                let hi = vandq_u8(vshrq_n_u8::<4>(s), mask);
-                for r in 0..R {
-                    let start = (r * k + j) * TABLE_BYTES;
-                    // SAFETY: start + 32 <= gftbls.len() (asserted).
-                    let (tlo, thi) = unsafe {
-                        (
-                            vld1q_u8(gftbls.as_ptr().add(start)),
-                            vld1q_u8(gftbls.as_ptr().add(start + 16)),
-                        )
-                    };
-                    acc[r] =
-                        veorq_u8(acc[r], veorq_u8(vqtbl1q_u8(tlo, lo), vqtbl1q_u8(thi, hi)));
+        // SAFETY: NEON is baseline on every aarch64 target we ship; every
+        // load/store index is bounded by the wrapper's length assertions
+        // (i + 16 <= len == each slice's len; table offsets < gftbls.len()).
+        unsafe {
+            let mask = vdupq_n_u8(0x0f);
+            while i + 16 <= len {
+                let mut acc = [vdupq_n_u8(0); R];
+                for (j, src) in data.iter().enumerate() {
+                    let s = vld1q_u8(src.as_ptr().add(i));
+                    let lo = vandq_u8(s, mask);
+                    let hi = vandq_u8(vshrq_n_u8::<4>(s), mask);
+                    for r in 0..R {
+                        let start = (r * k + j) * TABLE_BYTES;
+                        let tlo = vld1q_u8(gftbls.as_ptr().add(start));
+                        let thi = vld1q_u8(gftbls.as_ptr().add(start + 16));
+                        acc[r] = veorq_u8(
+                            acc[r],
+                            veorq_u8(vqtbl1q_u8(tlo, lo), vqtbl1q_u8(thi, hi)),
+                        );
+                    }
                 }
+                for r in 0..R {
+                    vst1q_u8(out[r].as_mut_ptr().add(i), acc[r]);
+                }
+                i += 16;
             }
-            for r in 0..R {
-                // SAFETY: i + 16 <= len == out[r].len() (asserted).
-                unsafe { vst1q_u8(out[r].as_mut_ptr().add(i), acc[r]) };
-            }
-            i += 16;
         }
         encode_tail_nibble(gftbls, data, out, i);
     }
@@ -105,22 +105,23 @@ pub(crate) mod imp {
     /// Caller guarantees equal slice lengths (asserted by the wrapper).
     unsafe fn mad_neon_inner(tbl: &[u8; TABLE_BYTES], src: &[u8], dest: &mut [u8]) {
         let n = dest.len();
-        // SAFETY: the table is exactly 32 bytes by type.
-        let (tlo, thi) =
-            unsafe { (vld1q_u8(tbl.as_ptr()), vld1q_u8(tbl.as_ptr().add(16))) };
-        let mask = vdupq_n_u8(0x0f);
         let mut i = 0usize;
-        while i + 16 <= n {
-            // SAFETY: i + 16 <= n == src.len() == dest.len() (asserted).
-            unsafe {
+        // SAFETY: NEON is baseline on every aarch64 target we ship; the table
+        // is exactly 32 bytes by type and i + 16 <= n bounds every access
+        // (src.len() == dest.len() asserted by the wrapper).
+        unsafe {
+            let tlo = vld1q_u8(tbl.as_ptr());
+            let thi = vld1q_u8(tbl.as_ptr().add(16));
+            let mask = vdupq_n_u8(0x0f);
+            while i + 16 <= n {
                 let s = vld1q_u8(src.as_ptr().add(i));
                 let d = vld1q_u8(dest.as_ptr().add(i));
                 let lo = vandq_u8(s, mask);
                 let hi = vandq_u8(vshrq_n_u8::<4>(s), mask);
                 let p = veorq_u8(vqtbl1q_u8(tlo, lo), vqtbl1q_u8(thi, hi));
                 vst1q_u8(dest.as_mut_ptr().add(i), veorq_u8(d, p));
+                i += 16;
             }
-            i += 16;
         }
         for (d, &s) in dest[i..].iter_mut().zip(&src[i..]) {
             *d ^= table_mul(tbl, s);

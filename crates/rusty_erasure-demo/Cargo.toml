@@ -1,0 +1,24 @@
+[package]
+name = "rusty_erasure-demo"
+description = "Browser/wasm demo for rusty_erasure: encode, lose shards, recover — in the page. Dependency-free glue (no wasm-bindgen); see web/index.html."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+publish = false
+
+# Not `workspace = true`: the workspace denies unsafe_code, which includes the
+# `#[unsafe(no_mangle)]` attribute every wasm FFI export requires. This crate
+# contains those attributes and ZERO unsafe blocks — the exports themselves
+# are safe fns returning values/static pointers; the host only reads.
+[lints.rust]
+unsafe_code = "allow"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+rusty_erasure.workspace = true
+rusty_erasure-alloc.workspace = true

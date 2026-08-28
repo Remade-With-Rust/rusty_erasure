@@ -26,6 +26,11 @@ use core::sync::atomic::AtomicU64;
 use rusty_erasure_core::kernel::Kernels;
 
 pub mod aarch64;
+#[cfg(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    all(target_arch = "wasm32", target_feature = "simd128")
+))]
 mod tail;
 pub mod wasm;
 pub mod x86;
