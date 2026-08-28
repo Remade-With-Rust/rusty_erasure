@@ -1,8 +1,8 @@
 # GitHub Linguist: what this repository *is*, versus what is merely kept in it.
 #
 # The language bar was reporting ~6% C, which is true of the files and false of
-# the project: this crate ships no C, links no C, and cannot be built with a C
-# toolchain absent. The C here is the differential ORACLE RIG — small harnesses
+# the project: this crate ships no C, links no C, and builds with no C toolchain
+# present at all. The C here is the differential ORACLE RIG — small harnesses
 # we wrote that link real ISA-L to generate golden vectors and to provide the
 # competing arm in benchmarks. They are development-only, excluded from every
 # published artifact, and ISA-L itself is never vendored (see .gitignore).
