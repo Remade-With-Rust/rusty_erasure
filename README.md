@@ -27,10 +27,10 @@ parameters ISA-L leaves undefined. No C, no NASM, no GPL anywhere in the build.
   callers are responsible; here every entry point validates and returns a
   `Result`.
 
-> **Status: `0.1.0` — feature-complete and conformant, pre-publish.** The public
-> API is settled and encoded output is frozen: shards written by any build stay
-> readable. Every claim in this README has an entry in
-> [`corpus/LEDGER.md`](corpus/LEDGER.md) with the run that produced it.
+> **Status: `0.1.0` — published and conformant.** The public API is settled and
+> encoded output is frozen: shards written by any build stay readable. Every
+> claim in this README has an entry in [`corpus/LEDGER.md`](corpus/LEDGER.md)
+> with the run that produced it.
 
 ## Performance (interleaved, pinned, CPU-time)
 

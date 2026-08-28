@@ -8,8 +8,10 @@ manifest policy, one CI workflow, one test battery, and are published together)
 loss patterns supplied by callers that may themselves be handling hostile data (a corrupted
 shard store, a malicious peer's stripe). A unit that eats bytes from outside the process is
 critical-path regardless of size.
-**Mirrors**: none yet — no standalone landing repo, not yet published to crates.io. Both
-become mirrors at v1.0 publish and must be rendered from THIS file (SKILL.md §3.1).
+**Mirrors**: the five crates.io pages — `rusty_erasure`, `-core`, `-accel`, `-cli`,
+`-alloc` (published 2026-08-28). All five set `readme = "../../README.md"`, so they render
+the SAME block from THIS file and cannot drift (SKILL.md §3.1); a re-render plus the next
+`cargo publish` updates every one. No standalone landing repo yet.
 **Compliance**: none — the library holds no personal, health, or card data, opens no
 sockets, writes no files, and keeps no secrets. Every C-gate is `N/A` for that reason.
 **Architect**: Tim Almond
