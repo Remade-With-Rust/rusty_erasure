@@ -6,6 +6,7 @@
 //!   - we reconstruct stripes they encoded, through loss patterns that
 //!     REQUIRE parity (data shards missing);
 //!   - they reconstruct stripes we encoded.
+//!
 //! With this proven, the swap is a drop-in with zero wire-format break — old
 //! snapshots decode, new snapshots read back on old code.
 
@@ -36,7 +37,7 @@ const LENS: &[usize] = &[1, 31, 64, 1024, 4113];
 
 #[test]
 fn our_encode_is_byte_identical_to_reed_solomon_erasure() {
-    let mut rng = Rng(0xC0_47_0001);
+    let mut rng = Rng(0xC047_0001);
     for &(k, p) in CONFIGS {
         for &len in LENS {
             let rs = ReedSolomon::new(k, p).expect("rs");
@@ -65,7 +66,7 @@ fn our_encode_is_byte_identical_to_reed_solomon_erasure() {
 
 #[test]
 fn we_reconstruct_their_stripes_through_parity() {
-    let mut rng = Rng(0xC0_47_0002);
+    let mut rng = Rng(0xC047_0002);
     for &(k, p) in CONFIGS {
         let len = 1027;
         let rs = ReedSolomon::new(k, p).expect("rs");
@@ -85,7 +86,13 @@ fn we_reconstruct_their_stripes_through_parity() {
             missing.sort_unstable();
             missing.dedup();
             let shards: Vec<Option<&[u8]>> = (0..k + p)
-                .map(|i| if missing.contains(&i) { None } else { Some(stripe[i].as_slice()) })
+                .map(|i| {
+                    if missing.contains(&i) {
+                        None
+                    } else {
+                        Some(stripe[i].as_slice())
+                    }
+                })
                 .collect();
             let mut out = vec![vec![0u8; len]; missing.len()];
             {
@@ -102,7 +109,7 @@ fn we_reconstruct_their_stripes_through_parity() {
 
 #[test]
 fn they_reconstruct_our_stripes() {
-    let mut rng = Rng(0xC0_47_0003);
+    let mut rng = Rng(0xC047_0003);
     for &(k, p) in CONFIGS {
         let len = 513;
         let rs = ReedSolomon::new(k, p).expect("rs");
@@ -127,9 +134,14 @@ fn they_reconstruct_our_stripes() {
                 }
             })
             .collect();
-        rs.reconstruct(&mut slots).expect("their reconstruct of our stripe");
+        rs.reconstruct(&mut slots)
+            .expect("their reconstruct of our stripe");
         for i in 0..drop {
-            assert_eq!(slots[i].as_ref().expect("rebuilt"), &data[i], "k={k} p={p} shard {i}");
+            assert_eq!(
+                slots[i].as_ref().expect("rebuilt"),
+                &data[i],
+                "k={k} p={p} shard {i}"
+            );
         }
     }
 }

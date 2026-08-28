@@ -34,7 +34,11 @@ fn stripe(coder: Coder, len: usize, rng: &mut Rng) -> Stripe {
     let refs: Vec<&[u8]> = data.iter().map(|d| d.as_slice()).collect();
     let mut prefs: Vec<&mut [u8]> = parity.iter_mut().map(|b| b.as_mut_slice()).collect();
     coder.encode(&refs, &mut prefs).expect("encode");
-    Stripe { coder, data, parity }
+    Stripe {
+        coder,
+        data,
+        parity,
+    }
 }
 
 /// Recover every shard in `missing` from the rest and assert ground truth.
@@ -71,14 +75,26 @@ fn roundtrip_verify_and_sampled_recovery_across_the_grid() {
     } else {
         &[(2, 2), (4, 2), (8, 2), (10, 4), (16, 4), (20, 8), (32, 8)]
     };
-    let lens: &[usize] = if cfg!(miri) { &[1, 33] } else { &[1, 31, 32, 33, 96, 1024] };
+    let lens: &[usize] = if cfg!(miri) {
+        &[1, 33]
+    } else {
+        &[1, 31, 32, 33, 96, 1024]
+    };
     let patterns = if cfg!(miri) { 3 } else { 20 };
     for &(k, p) in configs {
         for &len in lens {
-            let s = stripe(Coder::new(Matrix::cauchy(k, p).unwrap()).unwrap(), len, &mut rng);
+            let s = stripe(
+                Coder::new(Matrix::cauchy(k, p).unwrap()).unwrap(),
+                len,
+                &mut rng,
+            );
             let drefs: Vec<&[u8]> = s.data.iter().map(|d| d.as_slice()).collect();
             let prefs: Vec<&[u8]> = s.parity.iter().map(|b| b.as_slice()).collect();
-            assert_eq!(s.coder.verify(&drefs, &prefs), Ok(true), "verify k={k} p={p} len={len}");
+            assert_eq!(
+                s.coder.verify(&drefs, &prefs),
+                Ok(true),
+                "verify k={k} p={p} len={len}"
+            );
 
             // Random loss patterns of size 1..=p across the whole stripe.
             for _ in 0..patterns {
@@ -98,12 +114,19 @@ fn roundtrip_verify_and_sampled_recovery_across_the_grid() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore = "1470-pattern sweep is deterministic and UB-free; too slow interpreted")]
+#[cfg_attr(
+    miri,
+    ignore = "1470-pattern sweep is deterministic and UB-free; too slow interpreted"
+)]
 fn exhaustive_loss_patterns_on_the_s6_config() {
     // ERASCORP S6: (10, 4). EVERY loss pattern of size 1..=4 over the 14
     // shards — 1470 patterns — rebuilt in full and compared to ground truth.
     let mut rng = Rng(0x0002_0002);
-    let s = stripe(Coder::new(Matrix::cauchy(10, 4).unwrap()).unwrap(), 257, &mut rng);
+    let s = stripe(
+        Coder::new(Matrix::cauchy(10, 4).unwrap()).unwrap(),
+        257,
+        &mut rng,
+    );
     let n = 14;
     let mut patterns = 0u32;
     let mut missing = Vec::new();
@@ -137,11 +160,18 @@ fn exhaustive_loss_patterns_on_the_s6_config() {
 #[test]
 fn update_in_any_order_equals_one_shot_encode() {
     let mut rng = Rng(0x0002_0003);
-    let configs: &[(usize, usize)] =
-        if cfg!(miri) { &[(4, 2)] } else { &[(4, 2), (10, 4), (16, 4)] };
+    let configs: &[(usize, usize)] = if cfg!(miri) {
+        &[(4, 2)]
+    } else {
+        &[(4, 2), (10, 4), (16, 4)]
+    };
     for &(k, p) in configs {
         let len = if cfg!(miri) { 65 } else { 513 };
-        let s = stripe(Coder::new(Matrix::cauchy(k, p).unwrap()).unwrap(), len, &mut rng);
+        let s = stripe(
+            Coder::new(Matrix::cauchy(k, p).unwrap()).unwrap(),
+            len,
+            &mut rng,
+        );
         for _ in 0..5 {
             // Random permutation of the update order.
             let mut order: Vec<usize> = (0..k).collect();
@@ -160,9 +190,62 @@ fn update_in_any_order_equals_one_shot_encode() {
 }
 
 #[test]
+fn decode_plan_recovery_equals_one_shot() {
+    let mut rng = Rng(0x0002_0006);
+    for &(k, p) in &[(4usize, 2usize), (10, 4), (16, 8)] {
+        let len = 777;
+        let s = stripe(
+            Coder::new(Matrix::cauchy(k, p).unwrap()).unwrap(),
+            len,
+            &mut rng,
+        );
+        for _ in 0..10 {
+            let nloss = 1 + rng.below(p);
+            let mut missing: Vec<usize> = Vec::new();
+            while missing.len() < nloss {
+                let x = rng.below(k + p);
+                if !missing.contains(&x) {
+                    missing.push(x);
+                }
+            }
+            missing.sort_unstable();
+            let present: Vec<bool> = (0..k + p).map(|i| !missing.contains(&i)).collect();
+            let plan = s.coder.decode_plan(&present, &missing).expect("plan");
+            let shards: Vec<Option<&[u8]>> = (0..k + p)
+                .map(|i| {
+                    if missing.contains(&i) {
+                        None
+                    } else if i < k {
+                        Some(s.data[i].as_slice())
+                    } else {
+                        Some(s.parity[i - k].as_slice())
+                    }
+                })
+                .collect();
+            // One plan, several stripes' worth of calls (reuse is the point).
+            for _ in 0..2 {
+                let mut out = vec![vec![0u8; len]; missing.len()];
+                let mut refs: Vec<&mut [u8]> = out.iter_mut().map(|b| b.as_mut_slice()).collect();
+                s.coder
+                    .recover_with(&plan, &shards, &mut refs)
+                    .expect("recover_with");
+                for (&x, got) in missing.iter().zip(&out) {
+                    let expect = if x < k { &s.data[x] } else { &s.parity[x - k] };
+                    assert_eq!(got, expect, "k={k} p={p} plan recovery shard {x}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn verify_detects_corruption() {
     let mut rng = Rng(0x0002_0004);
-    let s = stripe(Coder::new(Matrix::cauchy(6, 3).unwrap()).unwrap(), 300, &mut rng);
+    let s = stripe(
+        Coder::new(Matrix::cauchy(6, 3).unwrap()).unwrap(),
+        300,
+        &mut rng,
+    );
     let drefs: Vec<&[u8]> = s.data.iter().map(|d| d.as_slice()).collect();
     let mut bad = s.parity.clone();
     bad[1][17] ^= 0x40;
@@ -182,7 +265,11 @@ fn zero_length_shards_are_a_valid_stripe() {
 #[test]
 fn misuse_is_typed_errors_never_panics() {
     let mut rng = Rng(0x0002_0005);
-    let s = stripe(Coder::new(Matrix::cauchy(4, 2).unwrap()).unwrap(), 64, &mut rng);
+    let s = stripe(
+        Coder::new(Matrix::cauchy(4, 2).unwrap()).unwrap(),
+        64,
+        &mut rng,
+    );
     let coder = &s.coder;
     let drefs: Vec<&[u8]> = s.data.iter().map(|d| d.as_slice()).collect();
 
@@ -191,7 +278,10 @@ fn misuse_is_typed_errors_never_panics() {
     let mut prefs: Vec<&mut [u8]> = parity.iter_mut().map(|b| b.as_mut_slice()).collect();
     assert!(matches!(
         coder.encode(&drefs[..3], &mut prefs),
-        Err(CodeError::ShardCount { expected: 4, got: 3 })
+        Err(CodeError::ShardCount {
+            expected: 4,
+            got: 3
+        })
     ));
 
     // Mismatched shard length, with the offending index reported.
@@ -199,7 +289,11 @@ fn misuse_is_typed_errors_never_panics() {
     let mixed: Vec<&[u8]> = vec![&s.data[0], &short, &s.data[2], &s.data[3]];
     assert!(matches!(
         coder.encode(&mixed, &mut prefs),
-        Err(CodeError::ShardLength { index: 1, expected: 64, got: 63 })
+        Err(CodeError::ShardLength {
+            index: 1,
+            expected: 64,
+            got: 63
+        })
     ));
 
     // Update: out-of-range source index.
@@ -209,8 +303,14 @@ fn misuse_is_typed_errors_never_panics() {
     ));
 
     // Recover: too many missing.
-    let shards: Vec<Option<&[u8]>> =
-        vec![None, None, None, Some(&s.data[3]), Some(&s.parity[0]), Some(&s.parity[1])];
+    let shards: Vec<Option<&[u8]>> = vec![
+        None,
+        None,
+        None,
+        Some(&s.data[3]),
+        Some(&s.parity[0]),
+        Some(&s.parity[1]),
+    ];
     let mut out = vec![vec![0u8; 64]; 3];
     let mut orefs: Vec<&mut [u8]> = out.iter_mut().map(|b| b.as_mut_slice()).collect();
     assert!(matches!(

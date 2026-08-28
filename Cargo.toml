@@ -21,6 +21,9 @@ rust-version = "1.95"
 [workspace.lints.rust]
 unsafe_code = "deny"
 
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "deny"
+
 [workspace.dependencies]
 rusty_erasure-core = { path = "crates/rusty_erasure-core", version = "0.1.0" }
 rusty_erasure-accel = { path = "crates/rusty_erasure-accel", version = "0.1.0" }
@@ -30,3 +33,10 @@ rusty_erasure-alloc = { path = "crates/rusty_erasure-alloc", version = "0.1.0" }
 [profile.release]
 lto = "thin"
 codegen-units = 1
+# Hardening (use-protection-please H-05): arithmetic overflow panics instead
+# of wrapping in release. Perf-gated and PAID FOR, not assumed: interleaved
+# A/B on the S2 GFNI encode cell measured 0.985x (25.81 vs 26.21 GB/s, ~1.5%)
+# — the honest price of the safety property, recorded in LEDGER. Binaries keep
+# unwind so the typed-error contract (never abort on caller input) holds end
+# to end.
+overflow-checks = true

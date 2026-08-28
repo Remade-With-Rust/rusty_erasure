@@ -1,0 +1,49 @@
+# cargo-deny policy (use-protection-please H-08): advisories, licenses, bans,
+# sources. The shipped dependency tree is five workspace crates plus the two
+# house allocator crates — keep it that way; every addition is a decision.
+
+[advisories]
+version = 2
+yanked = "deny"
+# Justified exceptions, dated (use-protection-please H-08/H-09). BOTH reach
+# the graph ONLY through the test-only dev-dependency `reed-solomon-erasure`
+# (the klauspost-compat conformance oracle) — neither is in any shipped
+# artifact: the published crates' normal tree is five workspace crates plus
+# rusty_alloc. Verify with `cargo tree -e normal`. Review 2027-02-28, or
+# immediately if either advisory gains a shipped-tree path.
+ignore = [
+    # `instant` unmaintained, via parking_lot 0.11 -> reed-solomon-erasure.
+    { id = "RUSTSEC-2024-0384", reason = "dev-only oracle tree; no shipped path (reviewed 2026-08-28)" },
+    # `lru` 0.7 unsound LruCache::pop panic-safety, same dev-only path.
+    { id = "RUSTSEC-2026-0253", reason = "dev-only oracle tree; no shipped path (reviewed 2026-08-28)" },
+]
+
+[licenses]
+version = 2
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# The memory-safety doctrine, mechanized: a *-sys crate in the shipped tree is
+# a defect, not a convenience (rusty-coding-requirements §1.3).
+deny = [
+    { crate = "openssl-sys" },
+    { crate = "libz-sys" },
+    { crate = "zstd-sys" },
+    { crate = "lz4-sys" },
+    { crate = "bzip2-sys" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

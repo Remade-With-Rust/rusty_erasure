@@ -13,7 +13,10 @@ use std::time::Instant;
 use rusty_erasure_core::{Coder, Matrix};
 
 fn main() {
-    let args: Vec<usize> = std::env::args().skip(1).filter_map(|a| a.parse().ok()).collect();
+    let args: Vec<usize> = std::env::args()
+        .skip(1)
+        .filter_map(|a| a.parse().ok())
+        .collect();
     let &[k, p, len, reps] = args.as_slice() else {
         eprintln!("usage: scalar_baseline <k> <p> <shard_len> <reps>");
         std::process::exit(2);
@@ -36,7 +39,9 @@ fn main() {
         z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
         z ^ (z >> 31)
     };
-    let data: Vec<Vec<u8>> = (0..k).map(|_| (0..len).map(|_| next() as u8).collect()).collect();
+    let data: Vec<Vec<u8>> = (0..k)
+        .map(|_| (0..len).map(|_| next() as u8).collect())
+        .collect();
     let data_refs: Vec<&[u8]> = data.iter().map(|d| d.as_slice()).collect();
     let mut parity = vec![vec![0u8; len]; p];
 
@@ -50,7 +55,9 @@ fn main() {
     for _ in 0..reps {
         let t = Instant::now();
         let mut refs: Vec<&mut [u8]> = parity.iter_mut().map(|b| b.as_mut_slice()).collect();
-        coder.encode(&data_refs, black_box(&mut refs)).expect("encode");
+        coder
+            .encode(&data_refs, black_box(&mut refs))
+            .expect("encode");
         per_rep_ns.push(t.elapsed().as_nanos());
         black_box(&parity);
     }

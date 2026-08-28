@@ -39,6 +39,9 @@ pub mod x86;
 /// One relaxed add per call, never per element.
 pub static ACCEL_CENSUS_BYTES: AtomicU64 = AtomicU64::new(0);
 
+/// The `(xor_gen, pq_gen)` function pair a RAID dispatch returns.
+pub type RaidKernels = (fn(&[&[u8]], &mut [u8]), fn(&[&[u8]], &mut [u8], &mut [u8]));
+
 /// The best kernel set for the running CPU on THIS architecture, or `None`
 /// when no SIMD set applies — callers fall back to `Kernels::scalar()`.
 pub fn kernels() -> Option<Kernels> {
@@ -54,7 +57,37 @@ pub fn kernels() -> Option<Kernels> {
     {
         wasm::kernels()
     }
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "wasm32")))]
+    #[cfg(not(any(
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        target_arch = "wasm32"
+    )))]
+    {
+        None
+    }
+}
+
+/// The best RAID kernel pair (xor_gen, pq_gen) for this architecture, or
+/// `None` when only the scalar core applies. Byte-identical to
+/// `rusty_erasure_core::raid` on every arch (oracle-tested).
+pub fn raid_kernels() -> Option<RaidKernels> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        x86::raid_kernels()
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        aarch64::raid_kernels()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        wasm::raid_kernels()
+    }
+    #[cfg(not(any(
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        target_arch = "wasm32"
+    )))]
     {
         None
     }

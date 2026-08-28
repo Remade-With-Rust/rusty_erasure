@@ -84,8 +84,11 @@ fn cauchy_every_sampled_recovery_submatrix_inverts() {
     // The property Cauchy exists to guarantee: ANY k surviving rows form an
     // invertible decode matrix. Sampled across the corpus config grid.
     let mut rng = Rng(0xCAFE_0002);
-    let configs: &[(usize, usize)] =
-        if cfg!(miri) { &[(4, 2), (8, 2)] } else { &[(4, 2), (8, 2), (10, 4), (16, 4), (20, 8), (32, 8), (64, 8)] };
+    let configs: &[(usize, usize)] = if cfg!(miri) {
+        &[(4, 2), (8, 2)]
+    } else {
+        &[(4, 2), (8, 2), (10, 4), (16, 4), (20, 8), (32, 8), (64, 8)]
+    };
     for &(k, p) in configs {
         let m = Matrix::cauchy(k, p).unwrap();
         for round in 0..miri_scaled(200, 3) {
@@ -94,7 +97,10 @@ fn cauchy_every_sampled_recovery_submatrix_inverts() {
             let inv = sub
                 .invert()
                 .unwrap_or_else(|e| panic!("k={k} p={p} round={round} rows={rows:?}: {e}"));
-            assert!(sub.multiply(&inv).unwrap().is_identity(), "k={k} p={p} rows={rows:?}");
+            assert!(
+                sub.multiply(&inv).unwrap().is_identity(),
+                "k={k} p={p} rows={rows:?}"
+            );
         }
     }
 }
@@ -104,8 +110,11 @@ fn vandermonde_safe_region_sampled_submatrices_invert() {
     // Inside the documented safe region the same property must hold — that is
     // what "safe" means.
     let mut rng = Rng(0xBEEF_0003);
-    let configs: &[(usize, usize)] =
-        if cfg!(miri) { &[(5, 5), (10, 4)] } else { &[(3, 20), (4, 21), (5, 5), (10, 4), (21, 4), (15, 3)] };
+    let configs: &[(usize, usize)] = if cfg!(miri) {
+        &[(5, 5), (10, 4)]
+    } else {
+        &[(3, 20), (4, 21), (5, 5), (10, 4), (21, 4), (15, 3)]
+    };
     for &(k, p) in configs {
         let m = Matrix::reed_solomon(k, p).unwrap();
         for round in 0..miri_scaled(200, 3) {
@@ -114,7 +123,10 @@ fn vandermonde_safe_region_sampled_submatrices_invert() {
             let inv = sub
                 .invert()
                 .unwrap_or_else(|e| panic!("k={k} p={p} round={round} rows={rows:?}: {e}"));
-            assert!(sub.multiply(&inv).unwrap().is_identity(), "k={k} p={p} rows={rows:?}");
+            assert!(
+                sub.multiply(&inv).unwrap().is_identity(),
+                "k={k} p={p} rows={rows:?}"
+            );
         }
     }
 }
@@ -148,7 +160,10 @@ fn random_square_matrices_invert_or_report_singular_never_panic() {
     }
     // Random matrices over GF(2^8) are overwhelmingly invertible; if this is
     // ever low the test went vacuous, not the math wrong.
-    assert!(inverted as usize > rounds * 4 / 5, "only {inverted}/{rounds} inverted — probe broken?");
+    assert!(
+        inverted as usize > rounds * 4 / 5,
+        "only {inverted}/{rounds} inverted — probe broken?"
+    );
 }
 
 #[test]
@@ -158,28 +173,52 @@ fn dimension_sweep_never_panics_and_errors_are_typed() {
             let rs = Matrix::reed_solomon(k, p);
             let cy = Matrix::cauchy(k, p);
             if k == 0 || p == 0 {
-                assert!(matches!(rs, Err(MatrixError::Dimensions { .. })), "rs k={k} p={p}");
-                assert!(matches!(cy, Err(MatrixError::Dimensions { .. })), "cauchy k={k} p={p}");
+                assert!(
+                    matches!(rs, Err(MatrixError::Dimensions { .. })),
+                    "rs k={k} p={p}"
+                );
+                assert!(
+                    matches!(cy, Err(MatrixError::Dimensions { .. })),
+                    "cauchy k={k} p={p}"
+                );
             } else {
                 assert!(cy.is_ok(), "cauchy k={k} p={p}");
             }
         }
     }
     // Field-size limit: k + p > 255 refused, boundary accepted.
-    assert!(matches!(Matrix::cauchy(250, 10), Err(MatrixError::Dimensions { .. })));
+    assert!(matches!(
+        Matrix::cauchy(250, 10),
+        Err(MatrixError::Dimensions { .. })
+    ));
     assert!(Matrix::cauchy(247, 8).is_ok());
-    assert!(matches!(Matrix::cauchy(usize::MAX, 1), Err(MatrixError::Dimensions { .. })));
+    assert!(matches!(
+        Matrix::cauchy(usize::MAX, 1),
+        Err(MatrixError::Dimensions { .. })
+    ));
 }
 
 #[test]
 fn misuse_is_an_error_never_a_panic() {
     let m = Matrix::cauchy(4, 2).unwrap();
-    assert!(m.select_rows(&[0, 1, 2, 6]).is_err(), "row index == rows is out of range");
+    assert!(
+        m.select_rows(&[0, 1, 2, 6]).is_err(),
+        "row index == rows is out of range"
+    );
     assert!(m.select_rows(&[]).is_err());
-    assert!(m.invert().is_err(), "non-square invert is a dimension error");
-    assert!(Matrix::from_bytes(2, 2, vec![0; 3]).is_err(), "length mismatch");
+    assert!(
+        m.invert().is_err(),
+        "non-square invert is a dimension error"
+    );
+    assert!(
+        Matrix::from_bytes(2, 2, vec![0; 3]).is_err(),
+        "length mismatch"
+    );
     assert!(Matrix::from_bytes(0, 2, vec![]).is_err());
-    assert!(Matrix::from_bytes(300, 1, vec![0; 300]).is_err(), "dimension over 255");
+    assert!(
+        Matrix::from_bytes(300, 1, vec![0; 300]).is_err(),
+        "dimension over 255"
+    );
     let a = Matrix::cauchy(3, 2).unwrap();
     assert!(m.multiply(&a).is_err(), "inner-dimension mismatch");
 }

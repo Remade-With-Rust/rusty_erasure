@@ -1,0 +1,6 @@
+# Pinned toolchain (use-protection-please H-03): builds and CI run the same
+# compiler, not the developer default. MSRV (rust-version = 1.95) is the
+# separate floor consumers may build with.
+[toolchain]
+channel = "1.98.0"
+components = ["clippy", "rustfmt"]

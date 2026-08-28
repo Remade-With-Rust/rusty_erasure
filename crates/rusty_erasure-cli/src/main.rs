@@ -54,7 +54,9 @@ fn get_usize(
 ) -> Result<usize, String> {
     match flags.get(name) {
         None => Ok(default),
-        Some(v) => v.parse().map_err(|_| format!("--{name}: '{v}' is not a number")),
+        Some(v) => v
+            .parse()
+            .map_err(|_| format!("--{name}: '{v}' is not a number")),
     }
 }
 
@@ -67,7 +69,9 @@ fn build_stripe(k: usize, len: usize) -> Vec<Vec<u8>> {
         z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
         z ^ (z >> 31)
     };
-    (0..k).map(|_| (0..len).map(|_| next() as u8).collect()).collect()
+    (0..k)
+        .map(|_| (0..len).map(|_| next() as u8).collect())
+        .collect()
 }
 
 fn bench(args: &[String]) -> Result<(), String> {
@@ -115,7 +119,8 @@ fn bench(args: &[String]) -> Result<(), String> {
         let total = Instant::now();
         for _ in 0..reps {
             let t = Instant::now();
-            c.encode(&data_refs, black_box(&mut refs)).map_err(|e| e.to_string())?;
+            c.encode(&data_refs, black_box(&mut refs))
+                .map_err(|e| e.to_string())?;
             per_rep_ns.push(t.elapsed().as_nanos());
         }
         wall = total.elapsed();
@@ -125,7 +130,10 @@ fn bench(args: &[String]) -> Result<(), String> {
     let checksum = parity.iter().flatten().fold(0u8, |a, &b| a ^ b);
     per_rep_ns.sort_unstable();
     let src_bytes = (k * len) as u128 * reps as u128;
-    println!("cell k={k} p={p} len={len} reps={reps} kernels={}", c.kernels().name);
+    println!(
+        "cell k={k} p={p} len={len} reps={reps} kernels={}",
+        c.kernels().name
+    );
     println!(
         "work: source_bytes={src_bytes} table_muls={} checksum={checksum:#04x}",
         (k * p * len) as u128 * reps as u128
@@ -141,7 +149,8 @@ fn bench(args: &[String]) -> Result<(), String> {
         "census: scalar_bytes={} accel_bytes={} accel_pct={}",
         cen.scalar_bytes,
         cen.accel_bytes,
-        cen.accel_percent().map_or_else(|| "n/a".into(), |v| format!("{v:.2}%")),
+        cen.accel_percent()
+            .map_or_else(|| "n/a".into(), |v| format!("{v:.2}%")),
     );
     Ok(())
 }
@@ -169,7 +178,8 @@ fn bench_op(
     let mut parity = vec![vec![0u8; len]; p];
     {
         let mut prefs: Vec<&mut [u8]> = parity.iter_mut().map(|b| b.as_mut_slice()).collect();
-        c.encode(&data_refs, &mut prefs).map_err(|e| e.to_string())?;
+        c.encode(&data_refs, &mut prefs)
+            .map_err(|e| e.to_string())?;
     }
 
     let t0;
@@ -194,10 +204,23 @@ fn bench_op(
                 })
                 .collect();
             let mut out = vec![vec![0u8; len]; losses];
+            let plan = c
+                .decode_plan(
+                    &(0..n).map(|i| !missing.contains(&i)).collect::<Vec<bool>>(),
+                    &missing,
+                )
+                .map_err(|e| e.to_string())?;
+            let amortized = true; // steady-state repair shape: one plan, many stripes
             t0 = Instant::now();
             for _ in 0..reps {
                 let mut orefs: Vec<&mut [u8]> = out.iter_mut().map(|b| b.as_mut_slice()).collect();
-                c.recover(&shards, &missing, black_box(&mut orefs)).map_err(|e| e.to_string())?;
+                if amortized {
+                    c.recover_with(&plan, &shards, black_box(&mut orefs))
+                        .map_err(|e| e.to_string())?;
+                } else {
+                    c.recover(&shards, &missing, black_box(&mut orefs))
+                        .map_err(|e| e.to_string())?;
+                }
             }
             checksum = out.iter().flatten().fold(0u8, |a, &b| a ^ b);
             let wall = t0.elapsed();
@@ -206,7 +229,7 @@ fn bench_op(
                 c.kernels().name
             );
             println!(
-                "work: source_bytes={} rebuilt_bytes={} checksum={checksum:#04x} wall_ms={} (per-call decode-matrix build INCLUDED — as-shipped cost)",
+                "work: source_bytes={} rebuilt_bytes={} checksum={checksum:#04x} wall_ms={} (DecodePlan amortized — steady-state repair shape, matching ISA-L's amortized decode arm)",
                 (k * len) as u128 * reps as u128,
                 (losses * len) as u128 * reps as u128,
                 wall.as_millis()
@@ -222,7 +245,8 @@ fn bench_op(
                 let mut prefs: Vec<&mut [u8]> =
                     upd_parity.iter_mut().map(|b| b.as_mut_slice()).collect();
                 for (j, d) in data.iter().enumerate() {
-                    c.update(j, d, black_box(&mut prefs)).map_err(|e| e.to_string())?;
+                    c.update(j, d, black_box(&mut prefs))
+                        .map_err(|e| e.to_string())?;
                 }
             }
             checksum = upd_parity.iter().flatten().fold(0u8, |a, &b| a ^ b);
@@ -265,7 +289,11 @@ fn bench_op(
                 wall.as_millis()
             );
         }
-        other => return Err(format!("--op '{other}' (want encode|recover|update|xor|pq)")),
+        other => {
+            return Err(format!(
+                "--op '{other}' (want encode|recover|update|xor|pq)"
+            ));
+        }
     }
     Ok(())
 }
@@ -289,7 +317,9 @@ fn bench_stripes(
     };
     let c = Coder::with_kernels(matrix, kern).map_err(|e| e.to_string())?;
 
-    let mut all: Vec<(Vec<Vec<u8>>, Vec<Vec<u8>>)> = (0..stripes)
+    /// One stripe's buffers: its `k` source shards and its `p` parity shards.
+    type Stripe = (Vec<Vec<u8>>, Vec<Vec<u8>>);
+    let mut all: Vec<Stripe> = (0..stripes)
         .map(|_| (build_stripe(k, len), vec![vec![0u8; len]; p]))
         .collect();
 
@@ -352,11 +382,15 @@ fn census_verb() -> ExitCode {
         .collect();
     let mut out = vec![vec![0u8; 65536]; 2];
     let mut orefs: Vec<&mut [u8]> = out.iter_mut().map(|b| b.as_mut_slice()).collect();
-    c.recover(&shards, &[0, 1], &mut orefs).expect("recoverable");
+    c.recover(&shards, &[0, 1], &mut orefs)
+        .expect("recoverable");
 
     let cen = census::read();
     println!("kernels selected: {chosen}");
-    println!("scalar_bytes={} accel_bytes={}", cen.scalar_bytes, cen.accel_bytes);
+    println!(
+        "scalar_bytes={} accel_bytes={}",
+        cen.scalar_bytes, cen.accel_bytes
+    );
     match cen.accel_percent() {
         Some(pct) => println!("accel share: {pct:.2}%"),
         None => println!("accel share: n/a (no bytes counted)"),

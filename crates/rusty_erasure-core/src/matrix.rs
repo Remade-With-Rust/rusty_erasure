@@ -1,4 +1,4 @@
-﻿//! Coding matrices: generation (Vandermonde / Cauchy), inversion, and row
+//! Coding matrices: generation (Vandermonde / Cauchy), inversion, and row
 //! selection for recovery.
 //!
 //! Constructions are behavior-identical to ISA-L's `gf_gen_rs_matrix`,
@@ -65,7 +65,11 @@ impl Matrix {
             }
             row_gen = gf::mul(row_gen, 2);
         }
-        Ok(Self { rows: m, cols: k, data })
+        Ok(Self {
+            rows: m,
+            cols: k,
+            data,
+        })
     }
 
     /// Cauchy encode matrix for `k` sources and `p` parity rows — ISA-L's
@@ -85,7 +89,11 @@ impl Matrix {
                 data[k * i + j] = gf::inv((i ^ j) as u8);
             }
         }
-        Ok(Self { rows: m, cols: k, data })
+        Ok(Self {
+            rows: m,
+            cols: k,
+            data,
+        })
     }
 
     /// Build a matrix from raw row-major bytes. `data.len()` must equal
@@ -94,7 +102,10 @@ impl Matrix {
     /// their constructions need ≤ 255 distinct nonzero elements).
     pub fn from_bytes(rows: usize, cols: usize, data: Vec<u8>) -> Result<Self, MatrixError> {
         if rows == 0 || cols == 0 || rows > 256 || cols > 256 || data.len() != rows * cols {
-            return Err(MatrixError::Dimensions { k: cols, p: rows.saturating_sub(cols) });
+            return Err(MatrixError::Dimensions {
+                k: cols,
+                p: rows.saturating_sub(cols),
+            });
         }
         Ok(Self { rows, cols, data })
     }
@@ -144,7 +155,11 @@ impl Matrix {
             }
             data.extend_from_slice(&self.data[self.cols * r..self.cols * (r + 1)]);
         }
-        Ok(Self { rows: indices.len(), cols: self.cols, data })
+        Ok(Self {
+            rows: indices.len(),
+            cols: self.cols,
+            data,
+        })
     }
 
     /// Invert a square matrix — ISA-L's `gf_invert_matrix` (Gauss-Jordan with
@@ -152,13 +167,20 @@ impl Matrix {
     /// typed error. Non-square input is a dimension error.
     pub fn invert(&self) -> Result<Self, MatrixError> {
         if self.rows != self.cols {
-            return Err(MatrixError::Dimensions { k: self.cols, p: self.rows.saturating_sub(self.cols) });
+            return Err(MatrixError::Dimensions {
+                k: self.cols,
+                p: self.rows.saturating_sub(self.cols),
+            });
         }
         let n = self.rows;
         let mut a = self.data.clone();
         let mut out = vec![0u8; n * n];
         invert_gauss_jordan(&mut a, &mut out, n)?;
-        Ok(Self { rows: n, cols: n, data: out })
+        Ok(Self {
+            rows: n,
+            cols: n,
+            data: out,
+        })
     }
 
     /// Matrix product `self * rhs` (used by tests and the recovery path).
@@ -177,7 +199,11 @@ impl Matrix {
                 data[rhs.cols * i + j] = s;
             }
         }
-        Ok(Self { rows: self.rows, cols: rhs.cols, data })
+        Ok(Self {
+            rows: self.rows,
+            cols: rhs.cols,
+            data,
+        })
     }
 
     /// True if this is the identity matrix.
@@ -196,7 +222,11 @@ impl Matrix {
 /// DESTROYED (reduced to the identity on success), `out` receives the inverse,
 /// and a singular input is a typed error. Slice lengths must be `n * n`.
 pub fn invert_gauss_jordan(a: &mut [u8], out: &mut [u8], n: usize) -> Result<(), MatrixError> {
-    if n == 0 || !n.checked_mul(n).is_some_and(|nn| a.len() == nn && out.len() == nn) {
+    if n == 0
+        || !n
+            .checked_mul(n)
+            .is_some_and(|nn| a.len() == nn && out.len() == nn)
+    {
         return Err(MatrixError::Dimensions { k: n, p: 0 });
     }
     out.fill(0);
@@ -245,4 +275,3 @@ pub fn invert_gauss_jordan(a: &mut [u8], out: &mut [u8], n: usize) -> Result<(),
     }
     Ok(())
 }
-

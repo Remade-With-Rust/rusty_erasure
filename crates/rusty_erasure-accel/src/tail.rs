@@ -11,8 +11,9 @@ pub(crate) fn encode_tail_nibble(gftbls: &[u8], data: &[&[u8]], out: &mut [&mut 
             let mut acc = 0u8;
             for (j, src) in data.iter().enumerate() {
                 let start = (r * k + j) * TABLE_BYTES;
-                let tbl: &[u8; TABLE_BYTES] =
-                    gftbls[start..start + TABLE_BYTES].try_into().expect("checked by wrapper");
+                let tbl: &[u8; TABLE_BYTES] = gftbls[start..start + TABLE_BYTES]
+                    .try_into()
+                    .expect("checked by wrapper");
                 acc ^= table_mul(tbl, src[i + x]);
             }
             *d = acc;

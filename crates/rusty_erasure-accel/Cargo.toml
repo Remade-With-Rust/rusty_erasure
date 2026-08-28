@@ -13,8 +13,15 @@ categories = ["algorithms", "encoding", "hardware-support"]
 # Deliberately NOT `workspace = true`: the workspace denies unsafe_code, and this
 # crate is the single sanctioned exception (mission plan §4). Every unsafe block
 # carries a `// SAFETY:` invariant and an adversarially-reviewed bounds argument.
+#
+# An override drops the WHOLE workspace lint table, so the unsafe-documentation
+# lint is restated here — the crate holding every unsafe block must be the one
+# that cannot skip a SAFETY comment (use-protection-please H-16).
 [lints.rust]
 unsafe_code = "allow"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"
 
 [dependencies]
 rusty_erasure-core.workspace = true

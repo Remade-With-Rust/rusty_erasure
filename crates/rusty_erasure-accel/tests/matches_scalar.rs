@@ -24,8 +24,9 @@ impl Rng {
     }
 }
 
-const EDGE_LENS: &[usize] =
-    &[0, 1, 15, 16, 17, 31, 32, 33, 47, 63, 64, 65, 96, 255, 256, 1024, 4113];
+const EDGE_LENS: &[usize] = &[
+    0, 1, 15, 16, 17, 31, 32, 33, 47, 63, 64, 65, 96, 255, 256, 1024, 4113,
+];
 
 fn level_or_skip(level: Level) -> Option<rusty_erasure_core::kernel::Kernels> {
     let k = kernels_at(level);
@@ -42,13 +43,22 @@ fn level_or_skip(level: Level) -> Option<rusty_erasure_core::kernel::Kernels> {
 }
 
 fn check_encode_matches(level: Level) {
-    let Some(simd) = level_or_skip(level) else { return };
+    let Some(simd) = level_or_skip(level) else {
+        return;
+    };
     let scalar = Kernels::scalar();
     let mut rng = Rng(0x4C0D_E001 ^ level as u64);
     for &len in EDGE_LENS {
-        for &(k, rows) in
-            &[(1usize, 1usize), (2, 3), (4, 4), (5, 5), (10, 4), (10, 9), (16, 8), (32, 8)]
-        {
+        for &(k, rows) in &[
+            (1usize, 1usize),
+            (2, 3),
+            (4, 4),
+            (5, 5),
+            (10, 4),
+            (10, 9),
+            (16, 8),
+            (32, 8),
+        ] {
             let coeffs = rng.bytes(rows * k);
             let data: Vec<Vec<u8>> = (0..k).map(|_| rng.bytes(len)).collect();
             let data_refs: Vec<&[u8]> = data.iter().map(|d| d.as_slice()).collect();
@@ -73,7 +83,9 @@ fn check_encode_matches(level: Level) {
 }
 
 fn check_mad_matches(level: Level) {
-    let Some(simd) = level_or_skip(level) else { return };
+    let Some(simd) = level_or_skip(level) else {
+        return;
+    };
     let scalar = Kernels::scalar();
     let mut rng = Rng(0x4C0D_E002 ^ level as u64);
     for &len in EDGE_LENS {
@@ -141,6 +153,127 @@ fn gfni_mad_matches_scalar_for_every_coefficient() {
         (simd.mad)(&vtbl, &src, &mut b);
         assert_eq!(a, b, "gfni mul for c={c}");
     }
+}
+
+fn check_update_matches(level: Level) {
+    let Some(simd) = level_or_skip(level) else {
+        return;
+    };
+    let scalar = Kernels::scalar();
+    let mut rng = Rng(0x4C0D_E003 ^ level as u64);
+    for &len in EDGE_LENS {
+        for &(k, rows) in &[(1usize, 1usize), (3, 2), (5, 5), (10, 4), (10, 9), (16, 8)] {
+            let coeffs = rng.bytes(rows * k);
+            let vec_i = (rng.next() as usize) % k;
+            let src = rng.bytes(len);
+            let base: Vec<Vec<u8>> = (0..rows).map(|_| rng.bytes(len)).collect();
+
+            // Reference: the per-row mad sequence on the SIMD set's own
+            // tables (mad is itself oracle-gated against scalar).
+            let g_simd = (simd.init)(&coeffs);
+            let tb = simd.table_bytes;
+            let mut want = base.clone();
+            for (l, out) in want.iter_mut().enumerate() {
+                let start = (l * k + vec_i) * tb;
+                (simd.mad)(&g_simd[start..start + tb], &src, out);
+            }
+
+            // Fused update on the SIMD set.
+            let mut got = base.clone();
+            {
+                let mut refs: Vec<&mut [u8]> = got.iter_mut().map(|b| b.as_mut_slice()).collect();
+                (simd.update)(&g_simd, k, vec_i, &src, &mut refs);
+            }
+            assert_eq!(
+                got, want,
+                "{level:?} fused update k={k} rows={rows} len={len} vec_i={vec_i}"
+            );
+
+            // And the scalar set's fused update against its own mad sequence.
+            let g_s = (scalar.init)(&coeffs);
+            let mut want_s = base.clone();
+            for (l, out) in want_s.iter_mut().enumerate() {
+                let start = (l * k + vec_i) * scalar.table_bytes;
+                (scalar.mad)(&g_s[start..start + scalar.table_bytes], &src, out);
+            }
+            let mut got_s = base.clone();
+            {
+                let mut refs: Vec<&mut [u8]> = got_s.iter_mut().map(|b| b.as_mut_slice()).collect();
+                (scalar.update)(&g_s, k, vec_i, &src, &mut refs);
+            }
+            assert_eq!(
+                got_s, want_s,
+                "scalar fused update k={k} rows={rows} len={len}"
+            );
+            assert_eq!(got_s, got, "cross-set update disagreement");
+        }
+    }
+}
+
+#[test]
+fn ssse3_update_matches_mad_sequence() {
+    check_update_matches(Level::Ssse3);
+}
+
+#[test]
+fn avx2_update_matches_mad_sequence() {
+    check_update_matches(Level::Avx2);
+}
+
+#[test]
+fn gfni_update_matches_mad_sequence() {
+    check_update_matches(Level::Gfni);
+}
+
+/// Per-level RAID oracle: every (xor, pq) pair — including the ones dispatch
+/// currently shadows (SSE2 under AVX2, AVX2-pq under GFNI-pq) — must be
+/// byte-identical to the core scalar raid module. Lengths straddle the 128-
+/// and 64-byte unroll boundaries the quad-chunk loops introduced.
+fn check_raid_matches(level: Level) {
+    let Some((xor, pq)) = rusty_erasure_accel::x86::raid_kernels_at(level) else {
+        eprintln!("skipping raid {level:?}: not supported on this CPU");
+        return;
+    };
+    let mut rng = Rng(0xC0DE_5EED_0BAD_F00D);
+    for &len in &[
+        0usize, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 96, 127, 128, 129, 191, 192, 193, 255, 256,
+        257, 1024, 4113,
+    ] {
+        for &n in &[2usize, 3, 5, 8, 17] {
+            let sources: Vec<Vec<u8>> = (0..n).map(|_| rng.bytes(len)).collect();
+            let refs: Vec<&[u8]> = sources.iter().map(|s| s.as_slice()).collect();
+
+            let mut want_x = vec![0u8; len];
+            rusty_erasure_core::raid::xor_gen(&refs, &mut want_x).expect("core xor");
+            let mut got_x = vec![0xAAu8; len];
+            xor(&refs, &mut got_x);
+            assert_eq!(want_x, got_x, "{level:?} raid xor n={n} len={len}");
+
+            let mut want_p = vec![0u8; len];
+            let mut want_q = vec![0u8; len];
+            rusty_erasure_core::raid::pq_gen(&refs, &mut want_p, &mut want_q).expect("core pq");
+            let mut got_p = vec![0xAAu8; len];
+            let mut got_q = vec![0x55u8; len];
+            pq(&refs, &mut got_p, &mut got_q);
+            assert_eq!(want_p, got_p, "{level:?} raid p n={n} len={len}");
+            assert_eq!(want_q, got_q, "{level:?} raid q n={n} len={len}");
+        }
+    }
+}
+
+#[test]
+fn sse2_raid_matches_core() {
+    check_raid_matches(Level::Ssse3);
+}
+
+#[test]
+fn avx2_raid_matches_core() {
+    check_raid_matches(Level::Avx2);
+}
+
+#[test]
+fn gfni_raid_matches_core() {
+    check_raid_matches(Level::Gfni);
 }
 
 #[test]

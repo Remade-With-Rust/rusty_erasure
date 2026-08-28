@@ -67,11 +67,14 @@ fn full_grid_matches_isal_through_the_shipping_path() {
             assert_eq!(cdr.gftbls(), gftbls_expect, "{tag}: gftbls");
         }
 
-        let data: Vec<&[u8]> = (0..k).map(|j| &data_bytes[j * len..(j + 1) * len]).collect();
+        let data: Vec<&[u8]> = (0..k)
+            .map(|j| &data_bytes[j * len..(j + 1) * len])
+            .collect();
         let mut parity = vec![vec![0u8; len]; p];
         {
             let mut refs: Vec<&mut [u8]> = parity.iter_mut().map(|b| b.as_mut_slice()).collect();
-            cdr.encode(&data, &mut refs).unwrap_or_else(|e| panic!("{tag}: encode: {e}"));
+            cdr.encode(&data, &mut refs)
+                .unwrap_or_else(|e| panic!("{tag}: encode: {e}"));
         }
         let flat: Vec<u8> = parity.iter().flat_map(|b| b.iter().copied()).collect();
         assert_eq!(flat, parity_expect, "{tag}: encode output");

@@ -27,6 +27,6 @@ pub mod matrix;
 pub mod raid;
 pub mod tables;
 
-pub use encode::Coder;
+pub use encode::{Coder, DecodePlan};
 pub use error::{CodeError, MatrixError, RecoverError};
 pub use matrix::Matrix;

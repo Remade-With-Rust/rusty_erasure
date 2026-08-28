@@ -14,6 +14,18 @@ use crate::error::{CodeError, MatrixError, RecoverError};
 use crate::kernel::Kernels;
 use crate::matrix::Matrix;
 
+/// A prepared decode: the survivor selection, inverted submatrix (composed
+/// into per-target coefficient rows), and expanded tables for ONE loss
+/// pattern — reusable across every stripe sharing that pattern. Built by
+/// [`Coder::decode_plan`], consumed by [`Coder::recover_with`].
+#[derive(Debug, Clone)]
+pub struct DecodePlan {
+    gftbls: Vec<u8>,
+    survivors: Vec<usize>,
+    rebuild: Vec<usize>,
+    n: usize,
+}
+
 /// An erasure coder for one `(matrix)` configuration: `k` source shards in,
 /// `p` parity shards out, recovery from any `k` survivors.
 ///
@@ -53,7 +65,11 @@ impl Coder {
             });
         }
         let gftbls = (kernels.init)(matrix.parity_bytes());
-        Ok(Self { matrix, gftbls, kernels })
+        Ok(Self {
+            matrix,
+            gftbls,
+            kernels,
+        })
     }
 
     /// The kernel set this coder drives (name is useful for reporting).
@@ -86,11 +102,18 @@ impl Coder {
 
     fn check_data(&self, data: &[&[u8]], len: usize) -> Result<(), CodeError> {
         if data.len() != self.k() {
-            return Err(CodeError::ShardCount { expected: self.k(), got: data.len() });
+            return Err(CodeError::ShardCount {
+                expected: self.k(),
+                got: data.len(),
+            });
         }
         for (index, d) in data.iter().enumerate() {
             if d.len() != len {
-                return Err(CodeError::ShardLength { index, expected: len, got: d.len() });
+                return Err(CodeError::ShardLength {
+                    index,
+                    expected: len,
+                    got: d.len(),
+                });
             }
         }
         Ok(())
@@ -100,7 +123,10 @@ impl Coder {
     /// (overwritten). Byte-identical to ISA-L `ec_encode_data`.
     pub fn encode(&self, data: &[&[u8]], parity: &mut [&mut [u8]]) -> Result<(), CodeError> {
         if parity.len() != self.p() {
-            return Err(CodeError::ShardCount { expected: self.p(), got: parity.len() });
+            return Err(CodeError::ShardCount {
+                expected: self.p(),
+                got: parity.len(),
+            });
         }
         let len = parity.first().map_or(0, |b| b.len());
         for (index, b) in parity.iter().enumerate() {
@@ -129,10 +155,16 @@ impl Coder {
     ) -> Result<(), CodeError> {
         let k = self.k();
         if shard_index >= k {
-            return Err(CodeError::ShardIndex { index: shard_index, k });
+            return Err(CodeError::ShardIndex {
+                index: shard_index,
+                k,
+            });
         }
         if parity.len() != self.p() {
-            return Err(CodeError::ShardCount { expected: self.p(), got: parity.len() });
+            return Err(CodeError::ShardCount {
+                expected: self.p(),
+                got: parity.len(),
+            });
         }
         for (index, b) in parity.iter().enumerate() {
             if b.len() != data.len() {
@@ -143,11 +175,7 @@ impl Coder {
                 });
             }
         }
-        let tb = self.kernels.table_bytes;
-        for (l, out) in parity.iter_mut().enumerate() {
-            let start = (l * k + shard_index) * tb;
-            (self.kernels.mad)(&self.gftbls[start..start + tb], data, out);
-        }
+        (self.kernels.update)(&self.gftbls, k, shard_index, data, parity);
         Ok(())
     }
 
@@ -155,7 +183,10 @@ impl Coder {
     /// parity shard matches a fresh encode.
     pub fn verify(&self, data: &[&[u8]], parity: &[&[u8]]) -> Result<bool, CodeError> {
         if parity.len() != self.p() {
-            return Err(CodeError::ShardCount { expected: self.p(), got: parity.len() });
+            return Err(CodeError::ShardCount {
+                expected: self.p(),
+                got: parity.len(),
+            });
         }
         let len = parity.first().map_or(0, |b| b.len());
         for (index, b) in parity.iter().enumerate() {
@@ -168,19 +199,150 @@ impl Coder {
             }
         }
         self.check_data(data, len)?;
-        let k = self.k();
-        let tb = self.kernels.table_bytes;
-        let mut scratch = vec![0u8; len];
+        // One fused kernel call re-encodes every parity row in a single walk
+        // of the sources (brick: data was read p times, once per row — the
+        // census counter shows k*len counted bytes per verify instead of
+        // p*k*len). Memory cost: a p*len scratch instead of len.
+        let p = self.p();
+        if len == 0 {
+            return Ok(true);
+        }
+        let mut scratch = vec![0u8; p * len];
+        {
+            let mut rows: Vec<&mut [u8]> = scratch.chunks_mut(len).collect();
+            (self.kernels.encode)(&self.gftbls, data, &mut rows);
+        }
         for (l, expect) in parity.iter().enumerate() {
-            {
-                let mut out = [scratch.as_mut_slice()];
-                (self.kernels.encode)(&self.gftbls[l * k * tb..(l + 1) * k * tb], data, &mut out);
-            }
-            if scratch.as_slice() != *expect {
+            if &scratch[l * len..(l + 1) * len] != *expect {
                 return Ok(false);
             }
         }
         Ok(true)
+    }
+
+    /// Prepare a reusable decode plan for one loss pattern: which shards are
+    /// present (`present[i]`), and which indices to rebuild. The expensive,
+    /// data-independent work — survivor selection, submatrix inversion,
+    /// coefficient composition, table expansion — happens ONCE here;
+    /// [`Coder::recover_with`] then rebuilds any number of stripes with that
+    /// pattern at pure kernel cost (repair jobs and steady-state degraded
+    /// reads reuse one plan across every stripe).
+    pub fn decode_plan(
+        &self,
+        present: &[bool],
+        rebuild: &[usize],
+    ) -> Result<DecodePlan, RecoverError> {
+        let k = self.k();
+        let n = self.matrix.rows();
+        if present.len() != n {
+            return Err(CodeError::ShardCount {
+                expected: n,
+                got: present.len(),
+            }
+            .into());
+        }
+        for &x in rebuild {
+            if x >= n {
+                return Err(CodeError::ShardIndex { index: x, k: n }.into());
+            }
+        }
+        let mut survivors: Vec<usize> = Vec::with_capacity(k);
+        let mut have = 0usize;
+        for (i, &ok) in present.iter().enumerate() {
+            if ok {
+                have += 1;
+                if survivors.len() < k {
+                    survivors.push(i);
+                }
+            }
+        }
+        if survivors.len() < k {
+            return Err(RecoverError::TooManyMissing {
+                missing: n - have,
+                p: self.p(),
+            });
+        }
+        let b = self.matrix.select_rows(&survivors)?;
+        let d = b.invert()?;
+        let mut coeffs = vec![0u8; rebuild.len() * k];
+        for (r, &x) in rebuild.iter().enumerate() {
+            let row = &mut coeffs[r * k..(r + 1) * k];
+            if x < k {
+                for (t, c) in row.iter_mut().enumerate() {
+                    *c = d.get(x, t).expect("in range");
+                }
+            } else {
+                for (t, c) in row.iter_mut().enumerate() {
+                    let mut s = 0u8;
+                    for j in 0..k {
+                        s ^= crate::gf::mul(
+                            self.matrix.get(x, j).expect("in range"),
+                            d.get(j, t).expect("in range"),
+                        );
+                    }
+                    *c = s;
+                }
+            }
+        }
+        Ok(DecodePlan {
+            gftbls: (self.kernels.init)(&coeffs),
+            survivors,
+            rebuild: rebuild.to_vec(),
+            n,
+        })
+    }
+
+    /// Rebuild one stripe with a prepared [`DecodePlan`] — pure kernel cost,
+    /// no matrix work, no table expansion, one small scratch collection.
+    pub fn recover_with(
+        &self,
+        plan: &DecodePlan,
+        shards: &[Option<&[u8]>],
+        out: &mut [&mut [u8]],
+    ) -> Result<(), RecoverError> {
+        if shards.len() != plan.n {
+            return Err(CodeError::ShardCount {
+                expected: plan.n,
+                got: shards.len(),
+            }
+            .into());
+        }
+        if out.len() != plan.rebuild.len() {
+            return Err(CodeError::ShardCount {
+                expected: plan.rebuild.len(),
+                got: out.len(),
+            }
+            .into());
+        }
+        let mut src: Vec<&[u8]> = Vec::with_capacity(plan.survivors.len());
+        let len = out.first().map_or(0, |b| b.len());
+        for &i in &plan.survivors {
+            let s = shards[i].ok_or(RecoverError::TooManyMissing {
+                missing: 1,
+                p: self.p(),
+            })?;
+            if s.len() != len {
+                return Err(CodeError::ShardLength {
+                    index: i,
+                    expected: len,
+                    got: s.len(),
+                }
+                .into());
+            }
+            src.push(s);
+        }
+        for b in out.iter() {
+            if b.len() != len {
+                return Err(CodeError::ShardLength {
+                    index: 0,
+                    expected: len,
+                    got: b.len(),
+                }
+                .into());
+            }
+        }
+        (self.kernels.encode)(&plan.gftbls, &src, out);
+        Ok(())
     }
 
     /// Rebuild shards from survivors.
@@ -190,6 +352,10 @@ impl Coder {
     /// indices to reconstruct (source or parity), and `out` supplies one
     /// equal-length buffer per rebuild target. Any `k` present shards suffice;
     /// fewer is [`RecoverError::TooManyMissing`].
+    ///
+    /// For many stripes with one loss pattern, build a [`Coder::decode_plan`]
+    /// once and use [`Coder::recover_with`] — this one-shot form re-derives
+    /// the decode matrix every call.
     pub fn recover(
         &self,
         shards: &[Option<&[u8]>],
@@ -199,10 +365,18 @@ impl Coder {
         let k = self.k();
         let n = self.matrix.rows();
         if shards.len() != n {
-            return Err(CodeError::ShardCount { expected: n, got: shards.len() }.into());
+            return Err(CodeError::ShardCount {
+                expected: n,
+                got: shards.len(),
+            }
+            .into());
         }
         if rebuild.len() != out.len() {
-            return Err(CodeError::ShardCount { expected: rebuild.len(), got: out.len() }.into());
+            return Err(CodeError::ShardCount {
+                expected: rebuild.len(),
+                got: out.len(),
+            }
+            .into());
         }
         for &x in rebuild {
             if x >= n {
@@ -222,26 +396,34 @@ impl Coder {
             }
         }
         if survivors.len() < k {
-            return Err(RecoverError::TooManyMissing { missing: n - present, p: self.p() });
+            return Err(RecoverError::TooManyMissing {
+                missing: n - present,
+                p: self.p(),
+            });
         }
 
         // Shard length agreement across every present shard and output buffer.
         let len = shards[survivors[0]].expect("survivor is present").len();
         for (index, s) in shards.iter().enumerate() {
-            if let Some(s) = s {
-                if s.len() != len {
-                    return Err(
-                        CodeError::ShardLength { index, expected: len, got: s.len() }.into()
-                    );
+            if let Some(s) = s
+                && s.len() != len
+            {
+                return Err(CodeError::ShardLength {
+                    index,
+                    expected: len,
+                    got: s.len(),
                 }
+                .into());
             }
         }
         for (i, b) in out.iter().enumerate() {
             if b.len() != len {
-                return Err(
-                    CodeError::ShardLength { index: rebuild[i], expected: len, got: b.len() }
-                        .into(),
-                );
+                return Err(CodeError::ShardLength {
+                    index: rebuild[i],
+                    expected: len,
+                    got: b.len(),
+                }
+                .into());
             }
         }
 

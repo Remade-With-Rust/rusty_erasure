@@ -41,6 +41,9 @@ impl Rng {
 
 /// Port of the C test's `gen_err_list`: random erasures over the whole stripe,
 /// at most `m - k`, at least one; source errors always precede parity errors.
+// Ported verbatim from ISA-L's `erasure_code_test.c`: the index-walk shape is
+// kept so this stays diffable against the reference it gates us on.
+#[allow(clippy::needless_range_loop)]
 fn gen_err_list(rng: &mut Rng, k: usize, m: usize) -> (Vec<usize>, Vec<bool>, usize) {
     let mut err_list = Vec::new();
     let mut in_err = vec![false; m];
@@ -71,6 +74,7 @@ fn gen_err_list(rng: &mut Rng, k: usize, m: usize) -> (Vec<usize>, Vec<bool>, us
 /// Port of the C test's `gf_gen_decode_matrix`, including the singular-retry
 /// loop that substitutes the last survivor row with further parity rows (only
 /// reachable for RS matrices — Cauchy submatrices always invert).
+#[allow(clippy::needless_range_loop)] // see gen_err_list: ported index shape
 fn gen_decode_matrix(
     encode_matrix: &[u8],
     err_list: &[usize],
@@ -144,7 +148,10 @@ fn gen_decode_matrix(
 /// One full phase of erasure_code_test.c: encode, erase, build the decode
 /// matrix manually through compat, recover, compare against the originals.
 fn encode_recover_phase(rng: &mut Rng, cauchy: bool, k: usize, m: usize, len: usize) {
-    let tag = format!("kind={} k={k} m={m} len={len}", if cauchy { "cauchy" } else { "rs" });
+    let tag = format!(
+        "kind={} k={k} m={m} len={len}",
+        if cauchy { "cauchy" } else { "rs" }
+    );
     let mut encode_matrix = vec![0u8; m * k];
     if cauchy {
         gf_gen_cauchy1_matrix(&mut encode_matrix, m, k).expect("gen");
@@ -184,7 +191,10 @@ fn encode_recover_phase(rng: &mut Rng, cauchy: bool, k: usize, m: usize, len: us
         ec_encode_data(len, k, nerrs, &g2, &recov, &mut temp_refs).expect("recover");
     }
     for (i, &e) in err_list.iter().enumerate() {
-        assert_eq!(temp[i], stripe[e], "{tag}: recovery of shard {e}, errs={err_list:?}");
+        assert_eq!(
+            temp[i], stripe[e],
+            "{tag}: recovery of shard {e}, errs={err_list:?}"
+        );
     }
 }
 
@@ -288,7 +298,10 @@ fn vect_mul_contract() {
         for (i, (&s, &d)) in src.iter().zip(&dest).enumerate() {
             assert_eq!(d, gf_mul(c, s), "c={c} i={i}");
         }
-        assert!(gf_vect_mul(len - 13, &tbl, &src, &mut dest).is_err(), "unaligned len refused");
+        assert!(
+            gf_vect_mul(len - 13, &tbl, &src, &mut dest).is_err(),
+            "unaligned len refused"
+        );
     }
 }
 
@@ -319,5 +332,8 @@ fn inverse_random_matrices() {
             }
         }
     }
-    assert!(inverted > rounds / 2, "only {inverted}/{rounds} inverted — probe broken?");
+    assert!(
+        inverted > rounds / 2,
+        "only {inverted}/{rounds} inverted — probe broken?"
+    );
 }

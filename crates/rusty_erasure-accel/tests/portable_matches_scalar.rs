@@ -23,14 +23,18 @@ impl Rng {
 #[test]
 fn best_arch_kernels_match_scalar() {
     let Some(simd) = rusty_erasure_accel::kernels() else {
-        eprintln!("no accel set on this arch/build (e.g. wasm without +simd128) — scalar is the path");
+        eprintln!(
+            "no accel set on this arch/build (e.g. wasm without +simd128) — scalar is the path"
+        );
         return;
     };
     eprintln!("testing {}", simd.name);
     let census_before = simd.census.load(core::sync::atomic::Ordering::Relaxed);
     let scalar = Kernels::scalar();
     let mut rng = Rng(0x9047_AB1E);
-    for &len in &[0usize, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 96, 255, 1024, 4113] {
+    for &len in &[
+        0usize, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 96, 255, 1024, 4113,
+    ] {
         for &(k, rows) in &[(1usize, 1usize), (2, 3), (4, 4), (5, 5), (10, 4), (16, 8)] {
             let coeffs = rng.bytes(rows * k);
             let data: Vec<Vec<u8>> = (0..k).map(|_| rng.bytes(len)).collect();
@@ -59,11 +63,67 @@ fn best_arch_kernels_match_scalar() {
             (scalar.mad)(&sg, &src, &mut ma);
             (simd.mad)(&vg, &src, &mut mb);
             assert_eq!(ma, mb, "{} mad len={len}", simd.name);
+
+            // Fused update: fold source 0 into every row, both sets, from the
+            // same encoded starting state.
+            if k >= 1 && rows >= 1 && len > 0 {
+                let sg = (scalar.init)(&coeffs);
+                let vg = (simd.init)(&coeffs);
+                let mut ua = a.clone();
+                let mut ub = a.clone();
+                {
+                    let mut ur: Vec<&mut [u8]> = ua.iter_mut().map(|x| x.as_mut_slice()).collect();
+                    (scalar.update)(&sg, k, 0, data_refs[0], &mut ur);
+                }
+                {
+                    let mut ur: Vec<&mut [u8]> = ub.iter_mut().map(|x| x.as_mut_slice()).collect();
+                    (simd.update)(&vg, k, 0, data_refs[0], &mut ur);
+                }
+                assert_eq!(ua, ub, "{} update k={k} rows={rows} len={len}", simd.name);
+            }
         }
     }
     // The per-arch reach census: this arch's SIMD set must have counted the
     // bytes it just processed (an uncounted kernel is invisible to the
     // shipping census — the rusty_zstd law).
     let census_after = simd.census.load(core::sync::atomic::Ordering::Relaxed);
-    assert!(census_after > census_before, "{}: census did not advance", simd.name);
+    assert!(
+        census_after > census_before,
+        "{}: census did not advance",
+        simd.name
+    );
+}
+
+/// The dispatched RAID pair on this arch must be byte-identical to the core
+/// scalar raid module — the same oracle law, applied to xor_gen/pq_gen.
+#[test]
+fn arch_raid_kernels_match_core() {
+    let Some((xor, pq)) = rusty_erasure_accel::raid_kernels() else {
+        eprintln!("no accel RAID pair on this arch/build — the core path is the path");
+        return;
+    };
+    let mut rng = Rng(0x7A1D_5EED);
+    for &len in &[
+        0usize, 1, 7, 8, 15, 16, 31, 32, 33, 63, 64, 65, 96, 255, 1024, 4113,
+    ] {
+        for &n in &[2usize, 3, 5, 8, 17] {
+            let sources: Vec<Vec<u8>> = (0..n).map(|_| rng.bytes(len)).collect();
+            let refs: Vec<&[u8]> = sources.iter().map(|s| s.as_slice()).collect();
+
+            let mut want_x = vec![0u8; len];
+            rusty_erasure_core::raid::xor_gen(&refs, &mut want_x).expect("core xor");
+            let mut got_x = vec![0xAAu8; len];
+            xor(&refs, &mut got_x);
+            assert_eq!(want_x, got_x, "raid xor n={n} len={len}");
+
+            let mut want_p = vec![0u8; len];
+            let mut want_q = vec![0u8; len];
+            rusty_erasure_core::raid::pq_gen(&refs, &mut want_p, &mut want_q).expect("core pq");
+            let mut got_p = vec![0xAAu8; len];
+            let mut got_q = vec![0x55u8; len];
+            pq(&refs, &mut got_p, &mut got_q);
+            assert_eq!(want_p, got_p, "raid p n={n} len={len}");
+            assert_eq!(want_q, got_q, "raid q n={n} len={len}");
+        }
+    }
 }
