@@ -194,10 +194,22 @@ fn bench_op(
                 })
                 .collect();
             let mut out = vec![vec![0u8; len]; losses];
+            let plan = c
+                .decode_plan(
+                    &(0..n).map(|i| !missing.contains(&i)).collect::<Vec<bool>>(),
+                    &missing,
+                )
+                .map_err(|e| e.to_string())?;
+            let amortized = true; // steady-state repair shape: one plan, many stripes
             t0 = Instant::now();
             for _ in 0..reps {
                 let mut orefs: Vec<&mut [u8]> = out.iter_mut().map(|b| b.as_mut_slice()).collect();
-                c.recover(&shards, &missing, black_box(&mut orefs)).map_err(|e| e.to_string())?;
+                if amortized {
+                    c.recover_with(&plan, &shards, black_box(&mut orefs))
+                        .map_err(|e| e.to_string())?;
+                } else {
+                    c.recover(&shards, &missing, black_box(&mut orefs)).map_err(|e| e.to_string())?;
+                }
             }
             checksum = out.iter().flatten().fold(0u8, |a, &b| a ^ b);
             let wall = t0.elapsed();
@@ -206,7 +218,7 @@ fn bench_op(
                 c.kernels().name
             );
             println!(
-                "work: source_bytes={} rebuilt_bytes={} checksum={checksum:#04x} wall_ms={} (per-call decode-matrix build INCLUDED — as-shipped cost)",
+                "work: source_bytes={} rebuilt_bytes={} checksum={checksum:#04x} wall_ms={} (DecodePlan amortized — steady-state repair shape, matching ISA-L's amortized decode arm)",
                 (k * len) as u128 * reps as u128,
                 (losses * len) as u128 * reps as u128,
                 wall.as_millis()

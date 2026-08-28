@@ -143,6 +143,68 @@ fn gfni_mad_matches_scalar_for_every_coefficient() {
     }
 }
 
+fn check_update_matches(level: Level) {
+    let Some(simd) = level_or_skip(level) else { return };
+    let scalar = Kernels::scalar();
+    let mut rng = Rng(0x4C0D_E003 ^ level as u64);
+    for &len in EDGE_LENS {
+        for &(k, rows) in &[(1usize, 1usize), (3, 2), (5, 5), (10, 4), (10, 9), (16, 8)] {
+            let coeffs = rng.bytes(rows * k);
+            let vec_i = (rng.next() as usize) % k;
+            let src = rng.bytes(len);
+            let base: Vec<Vec<u8>> = (0..rows).map(|_| rng.bytes(len)).collect();
+
+            // Reference: the per-row mad sequence on the SIMD set's own
+            // tables (mad is itself oracle-gated against scalar).
+            let g_simd = (simd.init)(&coeffs);
+            let tb = simd.table_bytes;
+            let mut want = base.clone();
+            for (l, out) in want.iter_mut().enumerate() {
+                let start = (l * k + vec_i) * tb;
+                (simd.mad)(&g_simd[start..start + tb], &src, out);
+            }
+
+            // Fused update on the SIMD set.
+            let mut got = base.clone();
+            {
+                let mut refs: Vec<&mut [u8]> = got.iter_mut().map(|b| b.as_mut_slice()).collect();
+                (simd.update)(&g_simd, k, vec_i, &src, &mut refs);
+            }
+            assert_eq!(got, want, "{level:?} fused update k={k} rows={rows} len={len} vec_i={vec_i}");
+
+            // And the scalar set's fused update against its own mad sequence.
+            let g_s = (scalar.init)(&coeffs);
+            let mut want_s = base.clone();
+            for (l, out) in want_s.iter_mut().enumerate() {
+                let start = (l * k + vec_i) * scalar.table_bytes;
+                (scalar.mad)(&g_s[start..start + scalar.table_bytes], &src, out);
+            }
+            let mut got_s = base.clone();
+            {
+                let mut refs: Vec<&mut [u8]> = got_s.iter_mut().map(|b| b.as_mut_slice()).collect();
+                (scalar.update)(&g_s, k, vec_i, &src, &mut refs);
+            }
+            assert_eq!(got_s, want_s, "scalar fused update k={k} rows={rows} len={len}");
+            assert_eq!(got_s, got, "cross-set update disagreement");
+        }
+    }
+}
+
+#[test]
+fn ssse3_update_matches_mad_sequence() {
+    check_update_matches(Level::Ssse3);
+}
+
+#[test]
+fn avx2_update_matches_mad_sequence() {
+    check_update_matches(Level::Avx2);
+}
+
+#[test]
+fn gfni_update_matches_mad_sequence() {
+    check_update_matches(Level::Gfni);
+}
+
 #[test]
 fn census_counts_accel_bytes() {
     let Some(simd) = kernels_at(Level::Ssse3).or_else(|| kernels_at(Level::Avx2)) else {

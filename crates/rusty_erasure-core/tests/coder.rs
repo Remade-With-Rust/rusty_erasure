@@ -160,6 +160,49 @@ fn update_in_any_order_equals_one_shot_encode() {
 }
 
 #[test]
+fn decode_plan_recovery_equals_one_shot() {
+    let mut rng = Rng(0x0002_0006);
+    for &(k, p) in &[(4usize, 2usize), (10, 4), (16, 8)] {
+        let len = 777;
+        let s = stripe(Coder::new(Matrix::cauchy(k, p).unwrap()).unwrap(), len, &mut rng);
+        for _ in 0..10 {
+            let nloss = 1 + rng.below(p);
+            let mut missing: Vec<usize> = Vec::new();
+            while missing.len() < nloss {
+                let x = rng.below(k + p);
+                if !missing.contains(&x) {
+                    missing.push(x);
+                }
+            }
+            missing.sort_unstable();
+            let present: Vec<bool> = (0..k + p).map(|i| !missing.contains(&i)).collect();
+            let plan = s.coder.decode_plan(&present, &missing).expect("plan");
+            let shards: Vec<Option<&[u8]>> = (0..k + p)
+                .map(|i| {
+                    if missing.contains(&i) {
+                        None
+                    } else if i < k {
+                        Some(s.data[i].as_slice())
+                    } else {
+                        Some(s.parity[i - k].as_slice())
+                    }
+                })
+                .collect();
+            // One plan, several stripes' worth of calls (reuse is the point).
+            for _ in 0..2 {
+                let mut out = vec![vec![0u8; len]; missing.len()];
+                let mut refs: Vec<&mut [u8]> = out.iter_mut().map(|b| b.as_mut_slice()).collect();
+                s.coder.recover_with(&plan, &shards, &mut refs).expect("recover_with");
+                for (&x, got) in missing.iter().zip(&out) {
+                    let expect = if x < k { &s.data[x] } else { &s.parity[x - k] };
+                    assert_eq!(got, expect, "k={k} p={p} plan recovery shard {x}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn verify_detects_corruption() {
     let mut rng = Rng(0x0002_0004);
     let s = stripe(Coder::new(Matrix::cauchy(6, 3).unwrap()).unwrap(), 300, &mut rng);

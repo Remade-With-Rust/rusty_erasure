@@ -131,6 +131,56 @@ pub(crate) mod imp {
         }
     }
 
+    /// Fused update: one pass over the source folds it into every row.
+    pub(crate) fn update_simd128(gftbls: &[u8], k: usize, vec_i: usize, src: &[u8], outs: &mut [&mut [u8]]) {
+        assert!(vec_i < k, "source index in range");
+        assert!(
+            gftbls.len() >= ((outs.len().saturating_sub(1)) * k + vec_i + 1) * TABLE_BYTES,
+            "gftbls too short"
+        );
+        for o in outs.iter() {
+            assert_eq!(o.len(), src.len(), "update length mismatch");
+        }
+        ACCEL_CENSUS_BYTES.fetch_add(src.len() as u64, Ordering::Relaxed);
+        let n = src.len();
+        for row_base in (0..outs.len()).step_by(4) {
+            let g = (outs.len() - row_base).min(4);
+            let mut stbls: [&[u8; TABLE_BYTES]; 4] = [gftbls[..TABLE_BYTES].try_into().expect("checked"); 4];
+            for (ri, st) in stbls.iter_mut().enumerate().take(g) {
+                let start = ((row_base + ri) * k + vec_i) * TABLE_BYTES;
+                *st = gftbls[start..start + TABLE_BYTES].try_into().expect("checked");
+            }
+            let group = &mut outs[row_base..row_base + g];
+            let mut i = 0usize;
+            // SAFETY: simd128 statically enabled; i + 16 <= n bounds every access.
+            unsafe {
+                let mask = u8x16_splat(0x0f);
+                let mut tl = [u8x16_splat(0); 4];
+                let mut th = [u8x16_splat(0); 4];
+                for ri in 0..g {
+                    tl[ri] = v128_load(stbls[ri].as_ptr() as *const v128);
+                    th[ri] = v128_load(stbls[ri].as_ptr().add(16) as *const v128);
+                }
+                while i + 16 <= n {
+                    let s = v128_load(src.as_ptr().add(i) as *const v128);
+                    let lo = v128_and(s, mask);
+                    let hi = v128_and(u8x16_shr(s, 4), mask);
+                    for (ri, out) in group.iter_mut().enumerate() {
+                        let p = v128_xor(u8x16_swizzle(tl[ri], lo), u8x16_swizzle(th[ri], hi));
+                        let d = v128_load(out.as_ptr().add(i) as *const v128);
+                        v128_store(out.as_mut_ptr().add(i) as *mut v128, v128_xor(d, p));
+                    }
+                    i += 16;
+                }
+            }
+            for (ri, out) in group.iter_mut().enumerate() {
+                for (d, &s) in out[i..].iter_mut().zip(&src[i..]) {
+                    *d ^= table_mul(stbls[ri], s);
+                }
+            }
+        }
+    }
+
     pub(crate) fn mad_simd128(tbl: &[u8], src: &[u8], dest: &mut [u8]) {
         let tbl: &[u8; TABLE_BYTES] = tbl.try_into().expect("nibble mad takes a 32-byte table");
         assert_eq!(src.len(), dest.len(), "mad length mismatch");
@@ -151,6 +201,7 @@ pub fn kernels() -> Option<rusty_erasure_core::kernel::Kernels> {
             table_bytes: tables::TABLE_BYTES,
             encode: imp::encode_simd128,
             mad: imp::mad_simd128,
+            update: imp::update_simd128,
             name: "wasm32/simd128",
             census: &crate::ACCEL_CENSUS_BYTES,
         })

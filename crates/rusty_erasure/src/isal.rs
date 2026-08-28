@@ -218,12 +218,11 @@ pub fn ec_encode_data_update(
         }
     }
     if data.len() == len && coding.iter().all(|c| c.len() == len) {
-        let kern = nibble_kernels();
-        for (l, out) in coding.iter_mut().enumerate() {
-            let tbl = tbl_at(gftbls, l * k + vec_i)?;
-            (kern.mad)(tbl, data, out);
+        let need = ((rows.saturating_sub(1)) * k + vec_i + 1) * TABLE_BYTES;
+        if gftbls.len() >= need {
+            (nibble_kernels().update)(gftbls, k, vec_i, data, coding);
+            return Ok(());
         }
-        return Ok(());
     }
     SCALAR_CENSUS_BYTES.fetch_add(len as u64, Ordering::Relaxed);
     for (l, out) in coding.iter_mut().enumerate() {

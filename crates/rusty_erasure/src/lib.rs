@@ -19,8 +19,44 @@ extern crate alloc;
 pub mod isal;
 
 pub use rusty_erasure_core::{
-    CodeError, Coder, Matrix, MatrixError, RecoverError, gf, kernel, matrix, raid, tables,
+    CodeError, Coder, DecodePlan, Matrix, MatrixError, RecoverError, gf, kernel, matrix, tables,
 };
+
+/// RAID parity ops, dispatched: AVX2 kernels when the CPU has them (byte-
+/// identical to the scalar core, oracle-tested), the core implementation
+/// otherwise. Checks always run the core code (they are already word-wide).
+pub mod raid {
+    pub use rusty_erasure_core::raid::{PqMismatch, PqParity, pq_check, xor_check};
+    use rusty_erasure_core::{error::CodeError, raid as core_raid};
+
+    /// XOR parity of ≥2 sources into `parity` — dispatched `xor_gen`.
+    pub fn xor_gen(sources: &[&[u8]], parity: &mut [u8]) -> Result<(), CodeError> {
+        #[cfg(feature = "accel")]
+        if let Some((xor, _)) = rusty_erasure_accel::x86::raid_kernels() {
+            // Validate with the core rules, then run the kernel.
+            if sources.len() >= 2 && sources.iter().all(|s| s.len() == parity.len()) {
+                xor(sources, parity);
+                return Ok(());
+            }
+        }
+        core_raid::xor_gen(sources, parity)
+    }
+
+    /// RAID-6 P+Q of ≥2 sources — dispatched `pq_gen`.
+    pub fn pq_gen(sources: &[&[u8]], p: &mut [u8], q: &mut [u8]) -> Result<(), CodeError> {
+        #[cfg(feature = "accel")]
+        if let Some((_, pq)) = rusty_erasure_accel::x86::raid_kernels() {
+            if sources.len() >= 2
+                && p.len() == q.len()
+                && sources.iter().all(|s| s.len() == p.len())
+            {
+                pq(sources, p, q);
+                return Ok(());
+            }
+        }
+        core_raid::pq_gen(sources, p, q)
+    }
+}
 
 /// The best kernel set for the running CPU: the accel SIMD sets when the
 /// `accel` feature is on and the CPU supports them (detection cached), the

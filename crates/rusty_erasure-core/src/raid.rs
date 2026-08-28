@@ -43,6 +43,13 @@ fn check_lens(sources: &[&[u8]], len: usize, min_sources: usize) -> Result<(), C
 }
 
 /// XOR parity of ≥2 sources into `parity` — ISA-L `xor_gen`.
+///
+/// Deliberately the multi-pass shape: `copy_from_slice` then one
+/// auto-vectorized XOR pass per source. A single-pass u64×4 fold was tried
+/// (parity written once instead of N times) and MEASURED WORSE (−8%,
+/// LEDGER): the per-source passes are memcpy-class vectorized streams, and
+/// sequential parity stores are nearly free — the classic
+/// redundant-but-cheaper-than-the-fix case.
 pub fn xor_gen(sources: &[&[u8]], parity: &mut [u8]) -> Result<(), CodeError> {
     check_lens(sources, parity.len(), 2)?;
     let (first, rest) = sources.split_first().expect("count checked");
@@ -56,17 +63,26 @@ pub fn xor_gen(sources: &[&[u8]], parity: &mut [u8]) -> Result<(), CodeError> {
 }
 
 /// True when the XOR of ALL vectors (parity included) is zero — ISA-L
-/// `xor_check`.
+/// `xor_check`. Word-wide with per-block early exit.
 pub fn xor_check(vects: &[&[u8]]) -> Result<bool, CodeError> {
     let len = vects.first().map_or(0, |v| v.len());
     check_lens(vects, len, 2)?;
-    let mut acc = 0u8;
-    for i in 0..len {
-        let mut parity = 0u8;
+    let words = len / 8;
+    for i in 0..words {
+        let o = i * 8;
+        let mut acc = 0u64;
         for v in vects {
-            parity ^= v[i];
+            acc ^= u64::from_ne_bytes(v[o..o + 8].try_into().expect("in range"));
         }
-        acc |= parity;
+        if acc != 0 {
+            return Ok(false);
+        }
+    }
+    for i in words * 8..len {
+        let mut acc = 0u8;
+        for v in vects {
+            acc ^= v[i];
+        }
         if acc != 0 {
             return Ok(false);
         }
@@ -82,23 +98,37 @@ pub fn pq_gen(sources: &[&[u8]], p: &mut [u8], q: &mut [u8]) -> Result<(), CodeE
     }
     check_lens(sources, len, 2)?;
 
-    let words = len / 8;
-    // Word blocks: eight byte lanes at a time, ISA-L's exact recurrence.
-    for i in 0..words {
-        let at = |s: &[u8]| u64::from_ne_bytes(s[i * 8..i * 8 + 8].try_into().expect("in range"));
-        let last = sources.len() - 1;
-        let mut pw = at(sources[last]);
-        let mut qw = pw;
-        for j in (0..last).rev() {
-            let s = at(sources[j]);
-            pw ^= s;
-            qw = s ^ gf2_mul2_lanes(qw);
+    // 32-byte blocks: four independent u64 lanes per step (brick) — the ×2
+    // recurrence chains run in parallel across lanes and the shift/mask/poly
+    // trick becomes a 4-wide pattern the compiler can vectorize; per-word
+    // closure bounds checks collapse to one slice per block.
+    let last = sources.len() - 1;
+    let blocks = len / 32;
+    for i in 0..blocks {
+        let o = i * 32;
+        let load = |s: &[u8], w: usize| {
+            u64::from_ne_bytes(s[o + w * 8..o + w * 8 + 8].try_into().expect("in range"))
+        };
+        let mut pw = [0u64; 4];
+        let mut qw = [0u64; 4];
+        for w in 0..4 {
+            pw[w] = load(sources[last], w);
+            qw[w] = pw[w];
         }
-        p[i * 8..i * 8 + 8].copy_from_slice(&pw.to_ne_bytes());
-        q[i * 8..i * 8 + 8].copy_from_slice(&qw.to_ne_bytes());
+        for j in (0..last).rev() {
+            for w in 0..4 {
+                let s = load(sources[j], w);
+                pw[w] ^= s;
+                qw[w] = s ^ gf2_mul2_lanes(qw[w]);
+            }
+        }
+        for w in 0..4 {
+            p[o + w * 8..o + w * 8 + 8].copy_from_slice(&pw[w].to_ne_bytes());
+            q[o + w * 8..o + w * 8 + 8].copy_from_slice(&qw[w].to_ne_bytes());
+        }
     }
     // Byte tail — the part ISA-L's base quietly ignores; ours is exact.
-    for i in words * 8..len {
+    for i in blocks * 32..len {
         let last = sources.len() - 1;
         let mut pb = sources[last][i];
         let mut qb = pb;
@@ -144,21 +174,46 @@ pub fn pq_check(
         return Err(CodeError::ShardLength { index: 1, expected: len, got: q.len() });
     }
     check_lens(sources, len, 2)?;
-    for i in 0..len {
-        let last = sources.len() - 1;
-        let mut pb = sources[last][i];
-        let mut qb = pb;
+    let last = sources.len() - 1;
+
+    // Exact byte-wise check over one range (the reference semantics: first
+    // mismatching byte, P examined before Q at each offset).
+    let byte_scan = |from: usize, to: usize| -> Option<PqMismatch> {
+        for i in from..to {
+            let mut pb = sources[last][i];
+            let mut qb = pb;
+            for j in (0..last).rev() {
+                let s = sources[j][i];
+                pb ^= s;
+                qb = s ^ gf2_mul2_byte(qb);
+            }
+            if p[i] != pb {
+                return Some(PqMismatch { index: i, parity: PqParity::P });
+            }
+            if q[i] != qb {
+                return Some(PqMismatch { index: i, parity: PqParity::Q });
+            }
+        }
+        None
+    };
+
+    // Word-wide fast scan (brick: 8 byte lanes per recurrence step); a block
+    // that disagrees falls back to the byte scan for the exact index and the
+    // exact P-before-Q ordering.
+    let words = len / 8;
+    for i in 0..words {
+        let o = i * 8;
+        let load = |s: &[u8]| u64::from_ne_bytes(s[o..o + 8].try_into().expect("in range"));
+        let mut pw = load(sources[last]);
+        let mut qw = pw;
         for j in (0..last).rev() {
-            let s = sources[j][i];
-            pb ^= s;
-            qb = s ^ gf2_mul2_byte(qb);
+            let s = load(sources[j]);
+            pw ^= s;
+            qw = s ^ gf2_mul2_lanes(qw);
         }
-        if p[i] != pb {
-            return Ok(Some(PqMismatch { index: i, parity: PqParity::P }));
-        }
-        if q[i] != qb {
-            return Ok(Some(PqMismatch { index: i, parity: PqParity::Q }));
+        if pw != load(p) || qw != load(q) {
+            return Ok(byte_scan(o, o + 8));
         }
     }
-    Ok(None)
+    Ok(byte_scan(words * 8, len))
 }

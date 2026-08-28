@@ -44,8 +44,13 @@ pub struct Kernels {
     /// `gftbls` row-major from this set's `init`.
     pub encode: fn(gftbls: &[u8], data: &[&[u8]], out: &mut [&mut [u8]]),
     /// `dest ^= c · src` for one expanded table (`table_bytes` long, from
-    /// this set's `init`) — the update path.
+    /// this set's `init`).
     pub mad: fn(tbl: &[u8], src: &[u8], dest: &mut [u8]),
+    /// Fused incremental update: fold source `vec_i` into EVERY output row in
+    /// one pass over the source (`outs[l] ^= c[l][vec_i] · src`), tables for
+    /// row `l` at `(l*k + vec_i) * table_bytes` in `gftbls`. One source read
+    /// instead of `outs.len()` — the brick that fixed S7's shape.
+    pub update: fn(gftbls: &[u8], k: usize, vec_i: usize, src: &[u8], outs: &mut [&mut [u8]]),
     /// Kernel-set name, for reporting.
     pub name: &'static str,
     /// The census counter this set accumulates into.
@@ -60,8 +65,25 @@ impl Kernels {
             table_bytes: TABLE_BYTES,
             encode: scalar_encode,
             mad: scalar_mad,
+            update: scalar_update,
             name: "scalar",
             census: &SCALAR_CENSUS_BYTES,
+        }
+    }
+}
+
+fn scalar_update(gftbls: &[u8], k: usize, vec_i: usize, src: &[u8], outs: &mut [&mut [u8]]) {
+    SCALAR_CENSUS_BYTES.fetch_add(src.len() as u64, Ordering::Relaxed);
+    // Fused: one walk of the source updates every row (p cache streams).
+    let tbls: alloc::vec::Vec<&[u8; TABLE_BYTES]> = (0..outs.len())
+        .map(|l| {
+            let start = (l * k + vec_i) * TABLE_BYTES;
+            gftbls[start..start + TABLE_BYTES].try_into().expect("caller-validated tables")
+        })
+        .collect();
+    for (i, &s) in src.iter().enumerate() {
+        for (out, tbl) in outs.iter_mut().zip(&tbls) {
+            out[i] ^= table_mul(tbl, s);
         }
     }
 }

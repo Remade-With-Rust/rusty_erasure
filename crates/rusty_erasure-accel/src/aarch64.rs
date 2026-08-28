@@ -128,6 +128,56 @@ pub(crate) mod imp {
         }
     }
 
+    /// Fused update: one pass over the source folds it into every row.
+    pub(crate) fn update_neon(gftbls: &[u8], k: usize, vec_i: usize, src: &[u8], outs: &mut [&mut [u8]]) {
+        assert!(vec_i < k, "source index in range");
+        assert!(
+            gftbls.len() >= ((outs.len().saturating_sub(1)) * k + vec_i + 1) * TABLE_BYTES,
+            "gftbls too short"
+        );
+        for o in outs.iter() {
+            assert_eq!(o.len(), src.len(), "update length mismatch");
+        }
+        ACCEL_CENSUS_BYTES.fetch_add(src.len() as u64, Ordering::Relaxed);
+        let n = src.len();
+        for row_base in (0..outs.len()).step_by(4) {
+            let g = (outs.len() - row_base).min(4);
+            let mut stbls: [&[u8; TABLE_BYTES]; 4] = [gftbls[..TABLE_BYTES].try_into().expect("checked"); 4];
+            for (ri, st) in stbls.iter_mut().enumerate().take(g) {
+                let start = ((row_base + ri) * k + vec_i) * TABLE_BYTES;
+                *st = gftbls[start..start + TABLE_BYTES].try_into().expect("checked");
+            }
+            let group = &mut outs[row_base..row_base + g];
+            let mut i = 0usize;
+            // SAFETY: NEON is baseline aarch64; i + 16 <= n bounds every access.
+            unsafe {
+                let mask = vdupq_n_u8(0x0f);
+                let mut tl = [vdupq_n_u8(0); 4];
+                let mut th = [vdupq_n_u8(0); 4];
+                for ri in 0..g {
+                    tl[ri] = vld1q_u8(stbls[ri].as_ptr());
+                    th[ri] = vld1q_u8(stbls[ri].as_ptr().add(16));
+                }
+                while i + 16 <= n {
+                    let s = vld1q_u8(src.as_ptr().add(i));
+                    let lo = vandq_u8(s, mask);
+                    let hi = vandq_u8(vshrq_n_u8::<4>(s), mask);
+                    for (ri, out) in group.iter_mut().enumerate() {
+                        let p = veorq_u8(vqtbl1q_u8(tl[ri], lo), vqtbl1q_u8(th[ri], hi));
+                        let d = vld1q_u8(out.as_ptr().add(i));
+                        vst1q_u8(out.as_mut_ptr().add(i), veorq_u8(d, p));
+                    }
+                    i += 16;
+                }
+            }
+            for (ri, out) in group.iter_mut().enumerate() {
+                for (d, &s) in out[i..].iter_mut().zip(&src[i..]) {
+                    *d ^= table_mul(stbls[ri], s);
+                }
+            }
+        }
+    }
+
     pub(crate) fn mad_neon(tbl: &[u8], src: &[u8], dest: &mut [u8]) {
         let tbl: &[u8; TABLE_BYTES] = tbl.try_into().expect("nibble mad takes a 32-byte table");
         assert_eq!(src.len(), dest.len(), "mad length mismatch");
@@ -147,6 +197,7 @@ pub fn kernels() -> Option<rusty_erasure_core::kernel::Kernels> {
             table_bytes: tables::TABLE_BYTES,
             encode: imp::encode_neon,
             mad: imp::mad_neon,
+            update: imp::update_neon,
             name: "aarch64/neon",
             census: &crate::ACCEL_CENSUS_BYTES,
         })
