@@ -8,6 +8,7 @@ members = [
     "crates/rusty_erasure-cli",
     "crates/rusty_erasure-alloc",
     "crates/rusty_erasure-demo",
+    "crates/rusty_erasure-fuzzlib",
 ]
 
 [workspace.package]

@@ -1,6 +1,16 @@
 /target
 fuzz/target/
-fuzz/corpus/
-fuzz/artifacts/
+# fuzz/corpus and fuzz/artifacts are COMMITTED, deliberately:
+#   * the corpus is the seed set the nightly fuzz workflow resumes from, and
+#     it is embedded at build time by rusty_erasure-fuzzlib's build.rs so the
+#     cross-architecture replay has something to replay. Ignoring it would
+#     make that gate vacuous on any fresh clone, CI included.
+#   * artifacts are past reproducers; replaying them is how "every past
+#     crasher is a regression test" stays true without anyone remembering.
+# Keep them MINIMIZED (`cargo fuzz cmin <target>`) so the repo carries the
+# smallest input set that preserves coverage.
 tools/oracle/isa-l/
 tools/oracle/build/
+
+# Generated SBOMs - produced by CI at release time, never committed stale
+*.cdx.json

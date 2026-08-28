@@ -9,8 +9,9 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-rusty_erasure-core = { path = "../crates/rusty_erasure-core" }
-rusty_erasure = { path = "../crates/rusty_erasure" }
+# The harness bodies live in the workspace so the SAME code runs here under
+# libFuzzer and in the cross-architecture corpus replay test.
+rusty_erasure-fuzzlib = { path = "../crates/rusty_erasure-fuzzlib" }
 
 [[bin]]
 name = "matrix_gen"
@@ -36,6 +37,23 @@ bench = false
 [[bin]]
 name = "compat"
 path = "fuzz_targets/compat.rs"
+test = false
+doc = false
+bench = false
+
+# The newest unsafe code in the tree: five RAID kernel paths (SSE2, AVX2,
+# GFNI, NEON, SIMD128), each with 128/64/32/16-byte unroll tiers.
+[[bin]]
+name = "raid"
+path = "fuzz_targets/raid.rs"
+test = false
+doc = false
+bench = false
+
+# Every SIMD kernel set this CPU exposes, differentially vs the scalar oracle.
+[[bin]]
+name = "kernels"
+path = "fuzz_targets/kernels.rs"
 test = false
 doc = false
 bench = false

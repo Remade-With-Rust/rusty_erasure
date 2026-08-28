@@ -1,0 +1,24 @@
+[package]
+name = "rusty_erasure-fuzzlib"
+description = "Fuzz harness bodies, shared by the libFuzzer targets and the cross-architecture corpus replay. Never published."
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+rusty_erasure-core.workspace = true
+rusty_erasure.workspace = true
+rusty_erasure-accel = { workspace = true, optional = true }
+
+[features]
+default = ["accel"]
+# Mirrors the facade's feature: with it on, the differential bodies also
+# exercise every per-level SIMD kernel set this CPU exposes.
+accel = ["dep:rusty_erasure-accel", "rusty_erasure/accel"]

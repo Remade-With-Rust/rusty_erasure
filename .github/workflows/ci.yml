@@ -48,7 +48,9 @@ jobs:
       - run: cargo test -p rusty_erasure --no-default-features
 
   test-wasm:
-    # Executes the SIMD128 kernels under wasmtime (M6).
+    # Executes the SIMD128 kernels under wasmtime (M6), INCLUDING the fuzz
+    # corpus replay: libFuzzer is x86-only, so replaying every discovered
+    # input here is what makes "fuzzed" mean something for these kernels.
     runs-on: ubuntu-latest
     env:
       RUSTFLAGS: -C target-feature=+simd128
@@ -57,7 +59,10 @@ jobs:
       - uses: actions/checkout@v4
       - run: rustup target add wasm32-wasip1
       - uses: bytecodealliance/actions/wasmtime/setup@v1
-      - run: cargo test -p rusty_erasure-core -p rusty_erasure-accel -p rusty_erasure --target wasm32-wasip1
+      - run: >
+          cargo test --target wasm32-wasip1
+          -p rusty_erasure-core -p rusty_erasure-accel -p rusty_erasure
+          -p rusty_erasure-fuzzlib
 
   lint:
     runs-on: ubuntu-latest
@@ -87,3 +92,28 @@ jobs:
       - uses: actions/checkout@v4
       - run: rustup toolchain install nightly --component miri
       - run: cargo +nightly miri test -p rusty_erasure-core -p rusty_erasure
+
+  # cargo-vet: every dependency covered by an audit certification (H-10).
+  vet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-vet@0.10.2
+      - run: cargo vet --locked
+
+  # The shipped binary must actually carry its mitigations (H-31). Verified on
+  # every push, not only at release, so a linker-flag change cannot silently
+  # un-harden it and go unnoticed until someone cuts a tag.
+  binary-hardening:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-auditable@0.7.5
+      - run: cargo auditable build --release -p rusty_erasure-cli
+      - run: |
+          chmod +x tools/verify_hardening.sh
+          tools/verify_hardening.sh target/release/rerasure

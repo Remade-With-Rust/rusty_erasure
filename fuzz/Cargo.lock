@@ -99,7 +99,15 @@ name = "rusty_erasure-fuzz"
 version = "0.0.0"
 dependencies = [
  "libfuzzer-sys",
+ "rusty_erasure-fuzzlib",
+]
+
+[[package]]
+name = "rusty_erasure-fuzzlib"
+version = "0.1.0"
+dependencies = [
  "rusty_erasure",
+ "rusty_erasure-accel",
  "rusty_erasure-core",
 ]
 

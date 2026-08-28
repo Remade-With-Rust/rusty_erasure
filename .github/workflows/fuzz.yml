@@ -1,0 +1,98 @@
+name: fuzz
+
+# Continuous coverage-guided fuzzing (use-protection-please H-27).
+#
+# Runs nightly, one job per target, and PERSISTS the corpus between runs via
+# the actions cache — that is what makes it continuous rather than a series of
+# cold starts: each night resumes from the coverage the previous nights found.
+# A crash fails the job and uploads the reproducer as an artifact.
+#
+# The corpus this accumulates is also the input to `corpus_replay`, the test
+# that re-runs every discovered input on wasm and aarch64 (see
+# crates/rusty_erasure-fuzzlib). So a finding on x86 automatically becomes a
+# regression case on every architecture we ship.
+
+on:
+  schedule:
+    - cron: "17 3 * * *" # nightly, off-peak
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "Minutes per target"
+        default: "20"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [roundtrip, compat, raid, kernels, matrix_gen, matrix_invert]
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install nightly
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+
+      # Resume from the accumulated corpus. restore-keys makes each run pick
+      # up the most recent cache even though the key is run-unique, so the
+      # corpus grows monotonically instead of resetting nightly.
+      - uses: actions/cache@v4
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.target }}-
+
+      - name: fuzz ${{ matrix.target }}
+        run: |
+          mins="${{ github.event.inputs.minutes || '20' }}"
+          cargo +nightly fuzz run ${{ matrix.target }} -- \
+            -max_total_time=$((mins * 60)) -print_final_stats=1
+
+      - name: upload reproducers
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}/
+
+  # The architectures libFuzzer cannot reach get their own randomized run,
+  # at a scale a laptop `cargo test` would not tolerate. Replay covers what
+  # x86 discovered; this covers what x86 never thought to try.
+  sweep-cross-arch:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: wasm32 (wasmtime, +simd128)
+            target: wasm32-wasip1
+          - name: aarch64 (native arm runner)
+            target: native-arm
+    runs-on: ${{ matrix.target == 'native-arm' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    env:
+      RUSTY_ERASURE_SWEEP: "200000"
+    steps:
+      - uses: actions/checkout@v4
+      - if: matrix.target == 'wasm32-wasip1'
+        run: rustup target add wasm32-wasip1
+      - if: matrix.target == 'wasm32-wasip1'
+        uses: bytecodealliance/actions/wasmtime/setup@v1
+      - name: sweep ${{ matrix.name }}
+        run: |
+          if [ "${{ matrix.target }}" = "wasm32-wasip1" ]; then
+            export RUSTFLAGS="-C target-feature=+simd128"
+            # wasmtime does NOT inherit host env vars: without --env the
+            # sweep silently runs at its default size and the job looks like
+            # it did 200k when it did 2k. Pass it explicitly.
+            export CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime --dir=. --env RUSTY_ERASURE_SWEEP=$RUSTY_ERASURE_SWEEP"
+            cargo test --release -p rusty_erasure-fuzzlib --target wasm32-wasip1 -- --nocapture
+          else
+            cargo test --release -p rusty_erasure-fuzzlib -- --nocapture
+          fi

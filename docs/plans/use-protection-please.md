@@ -16,7 +16,8 @@ sockets, writes no files, and keeps no secrets. Every C-gate is `N/A` for that r
 **Audit depth**: deep for supply chain, code level, dynamic analysis and lints (tools run,
 outputs below); survey for release/ops gates that need artifacts a v0.1.0 pre-release has
 not produced yet.
-**Audited**: 2026-08-28 by Claude Fable 5 · **Next review**: 2027-02-28
+**Audited**: 2026-08-28 by Claude Fable 5 (re-audited same day after the ★-gate pass) ·
+**Next review**: 2027-02-28
 
 > Source of truth for this unit's hardening status. The README's status table is
 > **generated from this file** — edit here, then run:
@@ -77,7 +78,7 @@ statement, residual-risk pointer).
 | H-07 | ★ `Cargo.lock` committed | Completed | `git ls-files Cargo.lock` → tracked (and `fuzz/Cargo.lock`) | |
 | H-08 | ★ `deny.toml` policy present and enforced | Completed | `deny.toml` covers advisories + licenses + bans + sources; `[bans].deny` mechanizes the no-`*-sys` doctrine (openssl/libz/zstd/lz4/bzip2-sys); `[sources]` denies unknown registries and git. `cargo deny check` → `advisories ok, bans ok, licenses ok, sources ok`, exit 0 | |
 | H-09 | ★ Vulnerability scan clean | Completed | `cargo audit --deny warnings` → exit 0 (42 crate deps scanned). Two advisories carry dated written justifications in both `deny.toml` and `.cargo/audit.toml`: RUSTSEC-2024-0384 (`instant` unmaintained) and RUSTSEC-2026-0253 (`lru` unsound) reach the graph ONLY via the test-only dev-dependency `reed-solomon-erasure`; `cargo tree -e normal` shows the shipped tree is five workspace crates plus rusty_alloc. Review 2027-02-28 | |
-| H-10 | ★ `cargo vet` coverage complete | Incomplete | cargo-vet installed but no `supply-chain/` directory and no certifications imported. Cheap here — the normal tree is two external crates (`rusty_alloc`, `rusty_alloc-api`), both house-owned | |
+| H-10 | ★ `cargo vet` coverage complete | Completed | `cargo vet check` → **Vetting Succeeded (34 fully audited, 2 exempted)**, enforced per-push by the CI `vet` job. Built by importing the mozilla / google / isrg / zcash registries and then establishing trust in publishers those registries already trust (kennykerr for the `windows_*` family, rust-lang-owner for `libc`/`libm`, Amanieu, alexcrichton, newpavlov, …), plus our own org's publisher for `rusty_alloc`/`rusty_alloc-api`. **Every `safe-to-deploy` crate — the entire shipped tree — is certified.** The 2 exemptions are `winapi-{i686,x86_64}-pc-windows-gnu`, which predate crates.io publisher tracking (publisher UNKNOWN, so no trust relation is expressible); both are dev-only AND are the `*-windows-gnu` import stubs, never compiled on any target we ship. Documented and dated in `supply-chain/config.toml`. Structural note recorded during the audit: `cargo tree -p rusty_erasure -e normal` shows **the published library has zero third-party dependencies** — `libc`/`windows-*` enter only through the CLI's allocator seam | |
 | H-11 | Unsafe inventory measured and trending down | Completed | `cargo geiger --all-features` (run from `crates/rusty_erasure`): facade 0/0, `rusty_erasure-core` 0/0, `rusty_erasure-accel` 19 functions / 2048 expressions — the entire unsafe surface is the one crate the architecture designates. Archived in `crates/rusty_erasure-accel/UNSAFE.md` as the first datum of the trend | |
 | H-12 | ★ SBOM generated and published with releases | Incomplete | No release artifacts exist yet (v0.1.0, unpublished). Blocked on the first release, not on tooling | |
 | H-13 | Git dependencies pinned; no unknown registries or sources | Completed | No `git =` dependencies anywhere; the only `path =` deps are intra-workspace members with matching `version` fields. `deny.toml [sources]` sets `unknown-registry = "deny"` and `unknown-git = "deny"`; `cargo deny check sources` → ok | |
@@ -106,16 +107,16 @@ statement, residual-risk pointer).
 | ID | Gate | Status | Evidence | Target |
 |---|---|---|---|---|
 | H-23 | ★ Tests pass under Miri | Completed | `cargo +nightly miri test` — **31 tests** executed, zero UB, zero leaks (M3 ledger entry; non-vacuous, count recorded per the gate's own rule) | |
-| H-24 | Critical paths pass the sanitizers | Completed | ASan under cargo-fuzz on all three targets: roundtrip 540,959 + 694,740 execs, compat 391,868 + 403,501 execs, matrix_gen 4.13M, matrix_invert 0.50M — all clean (M1–M3 + full-benchmark ledger entries) | |
+| H-24 | Critical paths pass the sanitizers | Completed | ASan under cargo-fuzz across all six targets, all clean. Historic: roundtrip 540,959 + 694,740, compat 391,868 + 403,501, matrix_gen 4.13M, matrix_invert 0.50M. This pass added the two kernel-facing targets — **raid 3,214,440 execs, zero crashes**, coverage saturated (cov 279 / ft 893, only 136 new units over 3.2M runs) — plus a fresh campaign on the older four. The `kernels` target runs every SIMD level against the scalar oracle under ASan, which is the configuration that can catch an over-read that changes no output byte | |
 | H-25 | `cargo careful test` green | Incomplete | cargo-careful installed but not run in this pass | |
 
 ### Phase 6 — Fuzzing and properties
 
 | ID | Gate | Status | Evidence | Target |
 |---|---|---|---|---|
-| H-26 | ★ A fuzz target per public parser, decoder, or message handler | Completed | `fuzz/fuzz_targets/`: roundtrip (encode → lose ≤p shards → recover → assert ground truth), compat (the ISA-L-named API surface), matrix_gen, matrix_invert — covering every untrusted-input entry point the library exposes | |
-| H-27 | ★ Continuous fuzzing with no open crashes | Incomplete | Zero open crashers and every past finding fixed (the harness-side infinite loop found at M2 is a bounded Fisher-Yates now), but the coverage is campaign runs totalling ~5.7M execs, **not** ≥30 days of continuous coverage-guided fuzzing and not OSS-Fuzz-enrolled | |
-| H-28 | Property tests cover the documented invariants | Completed | Round-trip property (encode → any ≤p losses → recover → ground truth) exhaustively over 1470 loss patterns on (10,4) plus sampled across the (2,2)–(32,8) grid; "never panics on any byte slice" as the no-panic sweeps + fuzz targets; streaming-slicing ≡ one-shot proven for encode and recover; update-sequence ≡ one-shot asserted both in Rust and in C against the reference | |
+| H-26 | ★ A fuzz target per public parser, decoder, or message handler | Completed | **Six** targets in `fuzz/fuzz_targets/`, covering every untrusted-input entry point: roundtrip (encode → lose ≤p shards → recover → assert ground truth, now also asserting dispatched == scalar), compat (the ISA-L-named API surface), matrix_gen, matrix_invert, and two added in this pass — **`raid`** (differential xor/pq vs the scalar core, plus checker-detects-a-flipped-bit) and **`kernels`** (every SIMD level this CPU exposes, differentially vs the scalar oracle, over encode/mad/update). The two new ones close a real gap: the RAID and quad-chunk kernels were the newest unsafe code in the tree and had no fuzz coverage at all. Bodies live in `crates/rusty_erasure-fuzzlib` so the libFuzzer targets and the cross-architecture replay run identical code | |
+| H-27 | ★ Continuous fuzzing with no open crashes | Scheduled | **Zero open crashers** (`fuzz/artifacts/` empty for all six targets), and every past finding is a regression test — `past_findings_replay_without_hanging` replays the M2 timeout's whole seed space. Continuous fuzzing is now actually running rather than proposed: `.github/workflows/fuzz.yml` runs nightly, one job per target, **persisting the corpus across runs via the actions cache** so each night resumes from the accumulated coverage instead of cold-starting; a crash fails the job and uploads the reproducer. The ≥30-day criterion is calendar time from the workflow's first scheduled run. **Cross-architecture coverage is the part that is already complete**, in two layers: (1) `corpus_replay` re-executes all 1,361 corpus inputs plus the historical reproducer on wasm32 (wasmtime, +simd128) and aarch64 (qemu), so x86 findings become regression cases for the SIMD128 and NEON kernels libFuzzer cannot reach; (2) `seeded_random_sweep_never_panics` gives those architectures their OWN randomized coverage — corpus replay alone under-samples them, because libFuzzer's corpus is shaped by coverage feedback from the AVX2/GFNI kernels. Measured this pass: **240,000 generated inputs per architecture (40,000 × 6 targets), clean on wasm32 and aarch64**, scaled to 200,000/target in the nightly job | Tim Almond — 2026-09-28 |
+| H-28 | Property tests cover the documented invariants | Completed | Plus, added this pass: `short_and_degenerate_inputs_never_panic` sweeps all six harness bodies over every length 0..40 × five byte patterns + a counting pattern — the "never panics on any byte slice" invariant as a deterministic test rather than only a fuzzing artifact. Prior evidence: | Round-trip property (encode → any ≤p losses → recover → ground truth) exhaustively over 1470 loss patterns on (10,4) plus sampled across the (2,2)–(32,8) grid; "never panics on any byte slice" as the no-panic sweeps + fuzz targets; streaming-slicing ≡ one-shot proven for encode and recover; update-sequence ≡ one-shot asserted both in Rust and in C against the reference | |
 | H-29 | Mutation and/or differential testing on critical modules | Completed | This crate IS a differential harness against its reference: 902-case full-grid conformance (every Cauchy k=1..32 × p=1..8 and every safe-region Vandermonde config) generated by real ISA-L v2.32.1 and replayed through the shipping dispatched path, plus 77 encode + 36 RAID golden vectors, 65,536 exhaustive GF products, and 3/3 bidirectional conformance vs the real `reed-solomon-erasure` crate. Kernel-vs-scalar-oracle differential runs on every architecture in CI. `cargo mutants` not run | |
 
 ### Phase 7 — Formal verification
@@ -128,8 +129,8 @@ statement, residual-risk pointer).
 
 | ID | Gate | Status | Evidence | Target |
 |---|---|---|---|---|
-| H-31 | ★ Binary hardening applied and verified | Incomplete | `rerasure` is a developer/bench CLI, not a shipped product binary, and no checksec/mitigation-policy verification has been run on it. Blocks 1.0.0 only for the binary artifact; the library crates are unaffected | |
-| H-32 | Build is reproducible or fully auditable | Incomplete | No `cargo auditable` build and no documented reproducible-build procedure. `Cargo.lock` + pinned toolchain make it auditable in principle | |
+| H-31 | ★ Binary hardening applied and verified | Completed | `tools/verify_hardening.sh` checks the real ELF and **all five pass** on `rerasure`: PIE (type DYN), GNU_RELRO, BIND_NOW (full RELRO), non-executable stack, and the `.dep-v0` auditable dependency section. Windows verified with `dumpbin /headers`: Dynamic base, High Entropy Virtual Addresses, NX compatible — plus Control Flow Guard, applied to the shipped binary in `release.yml` only (it instruments indirect calls, and the kernel-dispatch seam is exactly that, so it is deliberately kept out of library and benchmark builds). Enforced by the CI `binary-hardening` job on every push, not just at release, so a linker-flag change cannot silently un-harden it | |
+| H-32 | Build is reproducible or fully auditable | Completed | Release artifacts are built with `cargo auditable` (`release.yml`), embedding the full dependency list in the binary — verified present as the `.dep-v0` ELF section by `tools/verify_hardening.sh`, so a shipped binary can be advisory-scanned without its source tree. Combined with the committed `Cargo.lock` and the pinned `rust-toolchain.toml`, the build is fully auditable | |
 
 ### Phase 9 — Runtime privilege
 
@@ -150,7 +151,7 @@ statement, residual-risk pointer).
 | ID | Gate | Status | Evidence | Target |
 |---|---|---|---|---|
 | H-37 | CI runs the hardening gate on every PR | Incomplete | `.github/workflows/ci.yml` now runs on push and PR: 8-target check matrix, tests on 4 OSes (including arm64 hardware), wasm under wasmtime, fmt, `clippy -D warnings`, **plus the new `supply-chain` (deny + audit) and `miri` jobs**. Remaining gap: actions are pinned to major tags (`actions/checkout@v4`), not commit SHAs, and there is no scheduled fuzz-regression job | |
-| H-38 | Releases signed, attested, and changelogged for security | Incomplete | No releases, no tags, no CHANGELOG yet | |
+| H-38 | Releases signed, attested, and changelogged for security | Incomplete | `CHANGELOG.md` now exists with an explicit **Security** section per release, and `release.yml` attaches build provenance (`actions/attest-build-provenance`) plus SHA256SUMS to every artifact. Still missing, and the reason this stays Incomplete: no release has been cut, and signed tags are the owner's key — the workflow cannot sign on their behalf | |
 | H-39 | ★ `SECURITY.md` with a coordinated disclosure process | Completed | `SECURITY.md` at the repo root: contact, 72-hour acknowledgement, 14-day status cadence, 90-day coordinated disclosure, supported-versions statement | |
 | H-40 | Advisory monitoring and scheduled re-audit | Incomplete | `cargo audit` is run manually (this pass) against a local advisory-db; no subscription or scheduled job. Next review date recorded in this file's header, but nothing enforces it | |
 | H-41 | ★ Residual risks listed and accepted; waivers time-bounded | Completed | Register below: every open risk has an owner, an acceptance, and a review date; both advisory waivers carry a 2027-02-28 expiry | |
@@ -169,7 +170,7 @@ no keys — it transforms caller-owned byte buffers in memory and returns.
 |---|---|---|---|---|
 | Two RUSTSEC advisories in the **dev-only** oracle tree (`instant` unmaintained, `lru` unsound) via `reed-solomon-erasure` | None on shipped artifacts — dev-dependency only, verified by `cargo tree -e normal` | Accepted; waived in `deny.toml` and `.cargo/audit.toml` with dated reasons. Expires 2027-02-28 or immediately on any shipped-tree path | Tim Almond | 2027-02-28 |
 | Unsafe safety argument is test-and-oracle-based, not formally proven (H-30) | A memory-safety bug that changes no output byte would evade the byte-identity oracles | Accepted for 0.x: ASan fuzzing and Miri cover exactly that gap, and both are green. Kani harnesses are the named 1.0 follow-up | Tim Almond | 2027-02-28 |
-| Fuzzing is campaign-based (~5.7M execs), not continuous ≥30 days (H-27) | Lower probability of finding deep-state bugs than sustained fuzzing | Accepted for 0.x; OSS-Fuzz enrolment or a scheduled CI fuzz job is the 1.0 follow-up | Tim Almond | 2027-02-28 |
+| Continuous fuzzing has started but has not yet run 30 days (H-27) | Less deep-state coverage than sustained fuzzing gives | Accepted: the nightly workflow is live and corpus-persistent, zero open crashers, and every discovered input already replays on all three architectures. OSS-Fuzz enrolment remains the stronger option if the crate's exposure grows | Tim Almond | 2026-09-28 |
 | CI actions pinned to major tags, not commit SHAs (H-37) | A compromised or retagged action version could execute in CI | Accepted: all actions are first-party GitHub or widely-used publishers; SHA pinning is the follow-up | Tim Almond | 2027-02-28 |
 | Frame pointers declined for measured perf (H-04) | Production stack walking through the kernels is harder for profilers | Accepted: measured 4.4% cost on the headline encode path, and the flag would only bind this repo's own builds, skewing our published numbers | Tim Almond | 2027-02-28 |
 
@@ -177,22 +178,19 @@ no keys — it transforms caller-owned byte buffers in memory and returns.
 
 ## v1.0.0 readiness
 
-**17 ★ gates. 12 Completed, 1 N/A, 4 Incomplete** — so 1.0.0 is **blocked** on:
+**17 ★ gates. 14 Completed, 1 Scheduled, 1 N/A, 1 Incomplete.** Nothing is left that
+requires a decision or a design change — the two open items are a calendar and a tag:
 
-| Gate | What is missing | Shape of the work |
+| Gate | Status | What remains |
 |---|---|---|
-| H-10 | `cargo vet` certifications | Hours — the normal tree is two external crates, both house-owned |
-| H-12 | SBOM published with a release | Blocked on there being a release, not on tooling |
-| H-27 | ≥30 days continuous fuzzing, no open crashers | Calendar time; a scheduled CI fuzz job starts the clock |
-| H-31 | Binary hardening verified for the `rerasure` CLI | One checksec/mitigation-policy run per shipped artifact |
+| H-27 | Scheduled (2026-09-28) | Calendar only. The nightly fuzz workflow is committed and accumulates corpus across runs; 30 days of it is the criterion. Zero open crashers today |
+| H-12 | Incomplete | One `git tag` away. `release.yml` builds auditable binaries, generates the CycloneDX SBOM, verifies hardening and attaches provenance — it just needs a release to attach them to, and cutting a 1.0.0 tag is the owner's call |
 
-None of the four is a design problem: two are calendar or release-gated, two are hours of
-mechanical work. The proposed order (owner and dates are the human step, deliberately left
-blank): (1) `cargo vet` certifications — closes ★ H-10; (2) a scheduled CI fuzz job to
-start the ★ H-27 clock; (3) at first release, `cargo auditable` + SBOM + signed tag +
-CHANGELOG + the binary-hardening check — closes ★ H-12, ★ H-31, H-32 and H-38 together;
-(4) pedantic/nursery clippy tiers, SHA-pinned actions, Kani harnesses (H-30) as the
-deeper follow-ups.
+Follow-ups beyond the ★ set, in the order they pay: pedantic/nursery clippy tiers (H-15's
+remaining half), SHA-pinned CI actions (H-37), Semgrep-class static analysis (H-22),
+`cargo careful` in CI (H-25), and Kani harnesses over the unsafe module (H-30) — the last
+being the one that would upgrade the kernel safety argument from test-and-oracle evidence
+to proof.
 
 ---
 
@@ -216,3 +214,22 @@ deeper follow-ups.
   blanket allow; the four remaining `#[allow]`s are per-function and carry written
   reasons. Gates closed in-pass by this work: ★ H-15, plus H-06 and part of H-37 via the
   new `supply-chain` and `miri` CI jobs.
+- **2026-08-28 (second pass, the ★-gate sweep)** — Closed ★ H-10, ★ H-31 and H-32;
+  advanced ★ H-27 from Incomplete to Scheduled with the clock running; left ★ H-12
+  release-gated. Tools run: `cargo vet check` (34 audited / 2 exempted),
+  `tools/verify_hardening.sh` (5/5 on the real ELF), `dumpbin /headers` (Windows
+  mitigations), `cargo auditable build`, `cargo cyclonedx`, and fuzz campaigns totalling
+  **7.5M+ executions across six targets with zero crashes**. Added: two fuzz targets
+  (`raid`, `kernels`) for the newest unsafe code, `crates/rusty_erasure-fuzzlib` holding
+  the shared harness bodies, the cross-architecture corpus replay (1,300+ inputs on
+  native + wasm + aarch64), `.github/workflows/fuzz.yml` (nightly, corpus-persistent),
+  `.github/workflows/release.yml`, `tools/verify_hardening.sh`, and CI jobs for vet and
+  binary hardening. **Findings in this pass**: (1) `cargo vet init` writes blanket
+  *exemptions*, which satisfy `cargo vet check` while certifying nothing — the initial
+  "Vetting Succeeded (36 exempted)" was vacuous and had to be rebuilt from real trust
+  relationships. (2) The corpus replay's first design used `include_bytes!` against live
+  corpus paths and broke a build mid-campaign, because libFuzzer's REDUCE pass deletes
+  inputs while it runs; fixed by snapshotting into `OUT_DIR`. (3) Pinning the toolchain
+  in the previous pass silently broke the cross-target dev loop — the aarch64 and wasm
+  stds had to be installed for 1.98.0, and a stale aarch64 std produced "invalid metadata
+  for crate core" until removed by hand.
