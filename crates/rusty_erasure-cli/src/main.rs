@@ -78,9 +78,14 @@ fn bench(args: &[String]) -> Result<(), String> {
     let reps = get_usize(&flags, "reps", 6000)?;
     let stripes = get_usize(&flags, "stripes", 1)?;
     let threads = get_usize(&flags, "threads", 1)?;
+    let losses = get_usize(&flags, "losses", 2)?;
+    let op = flags.get("op").map(String::as_str).unwrap_or("encode");
     let kernels_arg = flags.get("kernels").map(String::as_str).unwrap_or("auto");
     if stripes > 1 || threads > 1 {
         return bench_stripes(k, p, len, reps, stripes, threads.max(1), kernels_arg);
+    }
+    if op != "encode" {
+        return bench_op(op, k, p, len, reps, losses, kernels_arg);
     }
 
     let matrix = Matrix::cauchy(k, p).map_err(|e| e.to_string())?;
@@ -138,6 +143,130 @@ fn bench(args: &[String]) -> Result<(), String> {
         cen.accel_bytes,
         cen.accel_percent().map_or_else(|| "n/a".into(), |v| format!("{v:.2}%")),
     );
+    Ok(())
+}
+
+/// Non-encode ops for the corpus cells: `recover` (S6 — rebuilds `losses`
+/// shards per rep, spread across data and parity, INCLUDING the per-call
+/// decode-matrix construction, i.e. as-shipped cost) and `update` (S7 — a
+/// full k-source update sequence per rep, work-equivalent to one encode).
+fn bench_op(
+    op: &str,
+    k: usize,
+    p: usize,
+    len: usize,
+    reps: usize,
+    losses: usize,
+    kernels_arg: &str,
+) -> Result<(), String> {
+    let matrix = Matrix::cauchy(k, p).map_err(|e| e.to_string())?;
+    let Some(kern) = kernels_named(kernels_arg) else {
+        return Err(format!("--kernels: '{kernels_arg}' unknown or unsupported"));
+    };
+    let c = Coder::with_kernels(matrix, kern).map_err(|e| e.to_string())?;
+    let data = build_stripe(k, len);
+    let data_refs: Vec<&[u8]> = data.iter().map(|d| d.as_slice()).collect();
+    let mut parity = vec![vec![0u8; len]; p];
+    {
+        let mut prefs: Vec<&mut [u8]> = parity.iter_mut().map(|b| b.as_mut_slice()).collect();
+        c.encode(&data_refs, &mut prefs).map_err(|e| e.to_string())?;
+    }
+
+    let t0;
+    let checksum;
+    match op {
+        "recover" => {
+            if losses == 0 || losses > p {
+                return Err(format!("--losses {losses} must be in 1..={p}"));
+            }
+            // Spread losses over data and parity; fixed pattern per run.
+            let n = k + p;
+            let missing: Vec<usize> = (0..losses).map(|i| (i * n) / losses).collect();
+            let shards: Vec<Option<&[u8]>> = (0..n)
+                .map(|i| {
+                    if missing.contains(&i) {
+                        None
+                    } else if i < k {
+                        Some(data[i].as_slice())
+                    } else {
+                        Some(parity[i - k].as_slice())
+                    }
+                })
+                .collect();
+            let mut out = vec![vec![0u8; len]; losses];
+            t0 = Instant::now();
+            for _ in 0..reps {
+                let mut orefs: Vec<&mut [u8]> = out.iter_mut().map(|b| b.as_mut_slice()).collect();
+                c.recover(&shards, &missing, black_box(&mut orefs)).map_err(|e| e.to_string())?;
+            }
+            checksum = out.iter().flatten().fold(0u8, |a, &b| a ^ b);
+            let wall = t0.elapsed();
+            println!(
+                "op=recover k={k} p={p} len={len} losses={losses} reps={reps} kernels={} missing={missing:?}",
+                c.kernels().name
+            );
+            println!(
+                "work: source_bytes={} rebuilt_bytes={} checksum={checksum:#04x} wall_ms={} (per-call decode-matrix build INCLUDED — as-shipped cost)",
+                (k * len) as u128 * reps as u128,
+                (losses * len) as u128 * reps as u128,
+                wall.as_millis()
+            );
+        }
+        "update" => {
+            let mut upd_parity = vec![vec![0u8; len]; p];
+            t0 = Instant::now();
+            for _ in 0..reps {
+                for b in upd_parity.iter_mut() {
+                    b.fill(0);
+                }
+                let mut prefs: Vec<&mut [u8]> =
+                    upd_parity.iter_mut().map(|b| b.as_mut_slice()).collect();
+                for (j, d) in data.iter().enumerate() {
+                    c.update(j, d, black_box(&mut prefs)).map_err(|e| e.to_string())?;
+                }
+            }
+            checksum = upd_parity.iter().flatten().fold(0u8, |a, &b| a ^ b);
+            if upd_parity != parity {
+                return Err("update sequence diverged from one-shot encode".into());
+            }
+            let wall = t0.elapsed();
+            println!(
+                "op=update k={k} p={p} len={len} reps={reps} kernels={} (full k-source sequence per rep + parity zeroing)",
+                c.kernels().name
+            );
+            println!(
+                "work: source_bytes={} checksum={checksum:#04x} wall_ms={}",
+                (k * len) as u128 * reps as u128,
+                wall.as_millis()
+            );
+        }
+        "xor" | "pq" => {
+            // S9: RAID parity throughput over the k source shards (p ignored).
+            let mut xp = vec![0u8; len];
+            let mut q = vec![0u8; len];
+            t0 = Instant::now();
+            if op == "xor" {
+                for _ in 0..reps {
+                    rusty_erasure::raid::xor_gen(&data_refs, black_box(&mut xp))
+                        .map_err(|e| e.to_string())?;
+                }
+            } else {
+                for _ in 0..reps {
+                    rusty_erasure::raid::pq_gen(&data_refs, black_box(&mut xp), black_box(&mut q))
+                        .map_err(|e| e.to_string())?;
+                }
+            }
+            checksum = xp.iter().chain(q.iter()).fold(0u8, |a, &b| a ^ b);
+            let wall = t0.elapsed();
+            println!("op={op} k={k} len={len} reps={reps}");
+            println!(
+                "work: source_bytes={} checksum={checksum:#04x} wall_ms={}",
+                (k * len) as u128 * reps as u128,
+                wall.as_millis()
+            );
+        }
+        other => return Err(format!("--op '{other}' (want encode|recover|update|xor|pq)")),
+    }
     Ok(())
 }
 

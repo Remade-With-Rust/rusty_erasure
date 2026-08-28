@@ -19,7 +19,7 @@ extern crate alloc;
 pub mod isal;
 
 pub use rusty_erasure_core::{
-    CodeError, Coder, Matrix, MatrixError, RecoverError, gf, kernel, matrix, tables,
+    CodeError, Coder, Matrix, MatrixError, RecoverError, gf, kernel, matrix, raid, tables,
 };
 
 /// The best kernel set for the running CPU: the accel SIMD sets when the
