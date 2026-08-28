@@ -11,7 +11,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::error::{CodeError, MatrixError, RecoverError};
-use crate::kernel;
+use crate::kernel::Kernels;
 use crate::matrix::Matrix;
 use crate::tables::{self, TABLE_BYTES};
 
@@ -27,13 +27,26 @@ pub struct Coder {
     /// Expanded tables for the parity rows: `p * k * 32` bytes, row-major —
     /// table for (parity row `l`, source `j`) at `(l*k + j) * 32`.
     gftbls: Vec<u8>,
+    /// The kernel set chosen ONCE at construction (dispatch at the surface,
+    /// never in the loop).
+    kernels: Kernels,
 }
 
 impl Coder {
     /// Build a coder from an encode matrix (`rows = k + p`, `cols = k`, top
     /// block identity — what [`Matrix::reed_solomon`] / [`Matrix::cauchy`]
     /// produce). A matrix with no parity rows is a dimension error.
+    ///
+    /// This constructor uses the **scalar** kernel set — core carries no
+    /// detection machinery. The `rusty_erasure` facade's `coder()` picks the
+    /// best SIMD set for the running CPU via [`Coder::with_kernels`]; prefer
+    /// it in applications.
     pub fn new(matrix: Matrix) -> Result<Self, MatrixError> {
+        Self::with_kernels(matrix, Kernels::scalar())
+    }
+
+    /// Build a coder driving an explicit kernel set (see [`Kernels`]).
+    pub fn with_kernels(matrix: Matrix, kernels: Kernels) -> Result<Self, MatrixError> {
         if matrix.rows() <= matrix.cols() {
             return Err(MatrixError::Dimensions {
                 k: matrix.cols(),
@@ -41,7 +54,12 @@ impl Coder {
             });
         }
         let gftbls = tables::init_tables(matrix.parity_bytes());
-        Ok(Self { matrix, gftbls })
+        Ok(Self { matrix, gftbls, kernels })
+    }
+
+    /// The kernel set this coder drives (name is useful for reporting).
+    pub fn kernels(&self) -> &Kernels {
+        &self.kernels
     }
 
     /// Source-shard count.
@@ -94,10 +112,7 @@ impl Coder {
             }
         }
         self.check_data(data, len)?;
-        let k = self.k();
-        for (l, out) in parity.iter_mut().enumerate() {
-            kernel::vect_dot_prod(out, &self.gftbls[l * k * TABLE_BYTES..(l + 1) * k * TABLE_BYTES], data)?;
-        }
+        (self.kernels.encode)(&self.gftbls, data, parity);
         Ok(())
     }
 
@@ -132,7 +147,7 @@ impl Coder {
             let tbl: &[u8; TABLE_BYTES] = self.gftbls[start..start + TABLE_BYTES]
                 .try_into()
                 .expect("gftbls sized at construction");
-            kernel::vect_mad(out, tbl, data)?;
+            (self.kernels.mad)(tbl, data, out);
         }
         Ok(())
     }
@@ -157,11 +172,14 @@ impl Coder {
         let k = self.k();
         let mut scratch = vec![0u8; len];
         for (l, expect) in parity.iter().enumerate() {
-            kernel::vect_dot_prod(
-                &mut scratch,
-                &self.gftbls[l * k * TABLE_BYTES..(l + 1) * k * TABLE_BYTES],
-                data,
-            )?;
+            {
+                let mut out = [scratch.as_mut_slice()];
+                (self.kernels.encode)(
+                    &self.gftbls[l * k * TABLE_BYTES..(l + 1) * k * TABLE_BYTES],
+                    data,
+                    &mut out,
+                );
+            }
             if scratch.as_slice() != *expect {
                 return Ok(false);
             }
@@ -241,17 +259,21 @@ impl Coder {
             .map(|&i| shards[i].expect("survivor is present"))
             .collect();
 
-        let mut coeffs = vec![0u8; k];
-        for (&x, buf) in rebuild.iter().zip(out.iter_mut()) {
+        // One decode-coefficient row per rebuild target, expanded together so
+        // a SINGLE kernels.encode call (with its row fusion) rebuilds all of
+        // them in one walk over the survivors.
+        let mut coeffs = vec![0u8; rebuild.len() * k];
+        for (r, &x) in rebuild.iter().enumerate() {
+            let row = &mut coeffs[r * k..(r + 1) * k];
             if x < k {
                 // Missing source: row x of the inverse maps survivors -> source x.
-                for t in 0..k {
-                    coeffs[t] = d.get(x, t).expect("in range");
+                for (t, c) in row.iter_mut().enumerate() {
+                    *c = d.get(x, t).expect("in range");
                 }
             } else {
                 // Missing parity: compose the parity row with the inverse so a
                 // single pass over the survivors rebuilds it directly.
-                for t in 0..k {
+                for (t, c) in row.iter_mut().enumerate() {
                     let mut s = 0u8;
                     for j in 0..k {
                         s ^= crate::gf::mul(
@@ -259,12 +281,12 @@ impl Coder {
                             d.get(j, t).expect("in range"),
                         );
                     }
-                    coeffs[t] = s;
+                    *c = s;
                 }
             }
-            let gftbls = tables::init_tables(&coeffs);
-            kernel::vect_dot_prod(buf, &gftbls, &src)?;
         }
+        let gftbls = tables::init_tables(&coeffs);
+        (self.kernels.encode)(&gftbls, &src, out);
         Ok(())
     }
 }

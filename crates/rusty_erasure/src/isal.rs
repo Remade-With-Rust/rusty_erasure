@@ -13,7 +13,10 @@
 //! Buffers may be longer than `len`; exactly `len` bytes are processed —
 //! matching C pointer semantics safely.
 
+use core::sync::atomic::Ordering;
+
 use rusty_erasure_core::error::{CodeError, MatrixError};
+use rusty_erasure_core::kernel::SCALAR_CENSUS_BYTES;
 use rusty_erasure_core::matrix::invert_gauss_jordan;
 use rusty_erasure_core::tables::{TABLE_BYTES, mul_table32, table_mul};
 use rusty_erasure_core::{gf, matrix};
@@ -151,6 +154,18 @@ pub fn ec_encode_data(
             return Err(CodeError::ShardLength { index: k + index, expected: len, got: b.len() });
         }
     }
+    let need = rows * k * TABLE_BYTES;
+    if gftbls.len() < need {
+        return Err(CodeError::ShardLength { index: 0, expected: need, got: gftbls.len() });
+    }
+    // Exact-length buffers (the common case) go through the dispatched
+    // kernels, census included; over-length buffers take the trimmed scalar
+    // path below (C pointer semantics only the caller's lengths reveal).
+    if data.iter().all(|s| s.len() == len) && coding.iter().all(|c| c.len() == len) {
+        (crate::best_kernels().encode)(&gftbls[..need], data, coding);
+        return Ok(());
+    }
+    SCALAR_CENSUS_BYTES.fetch_add((k * len) as u64, Ordering::Relaxed);
     for (l, out) in coding.iter_mut().enumerate() {
         let out = &mut out[..len];
         out.fill(0);
@@ -189,6 +204,15 @@ pub fn ec_encode_data_update(
             return Err(CodeError::ShardLength { index: k + index, expected: len, got: b.len() });
         }
     }
+    if data.len() == len && coding.iter().all(|c| c.len() == len) {
+        let kern = crate::best_kernels();
+        for (l, out) in coding.iter_mut().enumerate() {
+            let tbl = tbl_at(gftbls, l * k + vec_i)?;
+            (kern.mad)(tbl, data, out);
+        }
+        return Ok(());
+    }
+    SCALAR_CENSUS_BYTES.fetch_add(len as u64, Ordering::Relaxed);
     for (l, out) in coding.iter_mut().enumerate() {
         let tbl = tbl_at(gftbls, l * k + vec_i)?;
         for (d, &s) in out[..len].iter_mut().zip(&data[..len]) {
@@ -210,6 +234,15 @@ pub fn gf_vect_dot_prod(
     if dest.len() < len {
         return Err(CodeError::ShardLength { index: 0, expected: len, got: dest.len() });
     }
+    if gftbls.len() < vlen * TABLE_BYTES {
+        return Err(CodeError::ShardCount { expected: vlen, got: gftbls.len() / TABLE_BYTES });
+    }
+    if dest.len() == len && src.iter().all(|s| s.len() == len) {
+        let mut out = [&mut dest[..len]];
+        (crate::best_kernels().encode)(&gftbls[..vlen * TABLE_BYTES], src, &mut out);
+        return Ok(());
+    }
+    SCALAR_CENSUS_BYTES.fetch_add((vlen * len) as u64, Ordering::Relaxed);
     let dest = &mut dest[..len];
     dest.fill(0);
     for (j, s) in src.iter().enumerate() {
