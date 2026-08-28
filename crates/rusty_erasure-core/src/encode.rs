@@ -13,7 +13,6 @@ use alloc::vec::Vec;
 use crate::error::{CodeError, MatrixError, RecoverError};
 use crate::kernel::Kernels;
 use crate::matrix::Matrix;
-use crate::tables::{self, TABLE_BYTES};
 
 /// An erasure coder for one `(matrix)` configuration: `k` source shards in,
 /// `p` parity shards out, recovery from any `k` survivors.
@@ -53,7 +52,7 @@ impl Coder {
                 p: matrix.rows().saturating_sub(matrix.cols()),
             });
         }
-        let gftbls = tables::init_tables(matrix.parity_bytes());
+        let gftbls = (kernels.init)(matrix.parity_bytes());
         Ok(Self { matrix, gftbls, kernels })
     }
 
@@ -77,8 +76,10 @@ impl Coder {
         &self.matrix
     }
 
-    /// The expanded parity tables (ISA-L `gftbls` layout) — exposed for the
-    /// compat layer and the conformance tests.
+    /// The expanded parity tables, in THIS coder's kernel-set format
+    /// (`kernels().table_bytes` per coefficient — ISA-L nibble layout for the
+    /// scalar/PSHUFB sets, affine matrices for GFNI). Exposed for the compat
+    /// layer and the conformance tests.
     pub fn gftbls(&self) -> &[u8] {
         &self.gftbls
     }
@@ -142,12 +143,10 @@ impl Coder {
                 });
             }
         }
+        let tb = self.kernels.table_bytes;
         for (l, out) in parity.iter_mut().enumerate() {
-            let start = (l * k + shard_index) * TABLE_BYTES;
-            let tbl: &[u8; TABLE_BYTES] = self.gftbls[start..start + TABLE_BYTES]
-                .try_into()
-                .expect("gftbls sized at construction");
-            (self.kernels.mad)(tbl, data, out);
+            let start = (l * k + shard_index) * tb;
+            (self.kernels.mad)(&self.gftbls[start..start + tb], data, out);
         }
         Ok(())
     }
@@ -170,15 +169,12 @@ impl Coder {
         }
         self.check_data(data, len)?;
         let k = self.k();
+        let tb = self.kernels.table_bytes;
         let mut scratch = vec![0u8; len];
         for (l, expect) in parity.iter().enumerate() {
             {
                 let mut out = [scratch.as_mut_slice()];
-                (self.kernels.encode)(
-                    &self.gftbls[l * k * TABLE_BYTES..(l + 1) * k * TABLE_BYTES],
-                    data,
-                    &mut out,
-                );
+                (self.kernels.encode)(&self.gftbls[l * k * tb..(l + 1) * k * tb], data, &mut out);
             }
             if scratch.as_slice() != *expect {
                 return Ok(false);
@@ -285,7 +281,7 @@ impl Coder {
                 }
             }
         }
-        let gftbls = tables::init_tables(&coeffs);
+        let gftbls = (self.kernels.init)(&coeffs);
         (self.kernels.encode)(&gftbls, &src, out);
         Ok(())
     }

@@ -19,7 +19,18 @@ use rusty_erasure_core::error::{CodeError, MatrixError};
 use rusty_erasure_core::kernel::SCALAR_CENSUS_BYTES;
 use rusty_erasure_core::matrix::invert_gauss_jordan;
 use rusty_erasure_core::tables::{TABLE_BYTES, mul_table32, table_mul};
+use rusty_erasure_core::kernel::Kernels;
 use rusty_erasure_core::{gf, matrix};
+
+/// The best kernel set consuming ISA-L NIBBLE-format tables — never GFNI,
+/// whose tables are affine-format (see the module docs on format pairing).
+fn nibble_kernels() -> Kernels {
+    #[cfg(feature = "accel")]
+    if let Some(k) = rusty_erasure_accel::x86::kernels_nibble() {
+        return k;
+    }
+    Kernels::scalar()
+}
 
 /// GF(2^8) multiply — ISA-L `gf_mul`.
 pub const fn gf_mul(a: u8, b: u8) -> u8 {
@@ -159,10 +170,12 @@ pub fn ec_encode_data(
         return Err(CodeError::ShardLength { index: 0, expected: need, got: gftbls.len() });
     }
     // Exact-length buffers (the common case) go through the dispatched
-    // kernels, census included; over-length buffers take the trimmed scalar
-    // path below (C pointer semantics only the caller's lengths reveal).
+    // NIBBLE-format kernels — this function's `gftbls` contract IS the
+    // ec_init_tables nibble layout, so the GFNI set (affine tables) must
+    // never be used here (LEDGER M4's mixed-format lesson). Over-length
+    // buffers take the trimmed scalar path below.
     if data.iter().all(|s| s.len() == len) && coding.iter().all(|c| c.len() == len) {
-        (crate::best_kernels().encode)(&gftbls[..need], data, coding);
+        (nibble_kernels().encode)(&gftbls[..need], data, coding);
         return Ok(());
     }
     SCALAR_CENSUS_BYTES.fetch_add((k * len) as u64, Ordering::Relaxed);
@@ -205,7 +218,7 @@ pub fn ec_encode_data_update(
         }
     }
     if data.len() == len && coding.iter().all(|c| c.len() == len) {
-        let kern = crate::best_kernels();
+        let kern = nibble_kernels();
         for (l, out) in coding.iter_mut().enumerate() {
             let tbl = tbl_at(gftbls, l * k + vec_i)?;
             (kern.mad)(tbl, data, out);
@@ -239,7 +252,7 @@ pub fn gf_vect_dot_prod(
     }
     if dest.len() == len && src.iter().all(|s| s.len() == len) {
         let mut out = [&mut dest[..len]];
-        (crate::best_kernels().encode)(&gftbls[..vlen * TABLE_BYTES], src, &mut out);
+        (nibble_kernels().encode)(&gftbls[..vlen * TABLE_BYTES], src, &mut out);
         return Ok(());
     }
     SCALAR_CENSUS_BYTES.fetch_add((vlen * len) as u64, Ordering::Relaxed);

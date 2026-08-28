@@ -142,6 +142,18 @@ fn init_tables_expands_row_major_like_isal() {
 }
 
 #[test]
+fn affine_matrices_match_isal_gfni_table() {
+    // ISA-L's gf_table_gfni: 256 precomputed GF2P8AFFINEQB matrices, stored
+    // as little-endian u64s in the golden data. Our const-generated table
+    // must match every one — pinning the bit convention by proof.
+    static GFNI: &[u8; 2048] = include_bytes!("../../../corpus/golden/gf_table_gfni.bin");
+    for c in 0..256usize {
+        let want = u64::from_le_bytes(GFNI[c * 8..(c + 1) * 8].try_into().expect("8 bytes"));
+        assert_eq!(tables::AFFINE[c], want, "affine matrix for c={c}");
+    }
+}
+
+#[test]
 fn vandermonde_safe_region_is_enforced() {
     // Inside the documented region: accepted.
     for &(k, p) in &[(1usize, 200usize), (3, 100), (4, 21), (5, 5), (21, 4), (10, 4), (200, 3), (252, 3)] {

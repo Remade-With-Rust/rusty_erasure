@@ -39,6 +39,23 @@ pub fn coder(matrix: Matrix) -> Result<Coder, MatrixError> {
     Coder::with_kernels(matrix, best_kernels())
 }
 
+/// Look up a kernel set by name — the bench/census arms: `"auto"`,
+/// `"scalar"`, `"ssse3"`, `"avx2"`, `"gfni"`. `None` when the name is unknown
+/// or the CPU lacks the feature.
+pub fn kernels_named(name: &str) -> Option<kernel::Kernels> {
+    match name {
+        "auto" => Some(best_kernels()),
+        "scalar" => Some(kernel::Kernels::scalar()),
+        #[cfg(feature = "accel")]
+        "ssse3" => rusty_erasure_accel::x86::kernels_at(rusty_erasure_accel::x86::Level::Ssse3),
+        #[cfg(feature = "accel")]
+        "avx2" => rusty_erasure_accel::x86::kernels_at(rusty_erasure_accel::x86::Level::Avx2),
+        #[cfg(feature = "accel")]
+        "gfni" => rusty_erasure_accel::x86::kernels_at(rusty_erasure_accel::x86::Level::Gfni),
+        _ => None,
+    }
+}
+
 /// The always-on kernel-reach census (mission plan §7.1).
 pub mod census {
     use core::sync::atomic::Ordering;

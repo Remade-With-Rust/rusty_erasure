@@ -50,17 +50,20 @@ fn check_encode_matches(level: Level) {
             &[(1usize, 1usize), (2, 3), (4, 4), (5, 5), (10, 4), (10, 9), (16, 8), (32, 8)]
         {
             let coeffs = rng.bytes(rows * k);
-            let gftbls = tables::init_tables(&coeffs);
             let data: Vec<Vec<u8>> = (0..k).map(|_| rng.bytes(len)).collect();
             let data_refs: Vec<&[u8]> = data.iter().map(|d| d.as_slice()).collect();
 
             let mut a = vec![vec![0u8; len]; rows];
             let mut b = vec![vec![0xAAu8; len]; rows]; // different init: encode must overwrite
             {
+                // Each set builds tables in ITS OWN format from the same
+                // coefficients — formats are kernel-private by design.
+                let gftbls = (scalar.init)(&coeffs);
                 let mut ar: Vec<&mut [u8]> = a.iter_mut().map(|x| x.as_mut_slice()).collect();
                 (scalar.encode)(&gftbls, &data_refs, &mut ar);
             }
             {
+                let gftbls = (simd.init)(&coeffs);
                 let mut br: Vec<&mut [u8]> = b.iter_mut().map(|x| x.as_mut_slice()).collect();
                 (simd.encode)(&gftbls, &data_refs, &mut br);
             }
@@ -76,14 +79,14 @@ fn check_mad_matches(level: Level) {
     for &len in EDGE_LENS {
         for _ in 0..4 {
             let c = rng.next() as u8;
-            let mut tbl = [0u8; 32];
-            tables::mul_table32(c, &mut tbl);
+            let stbl = (scalar.init)(&[c]);
+            let vtbl = (simd.init)(&[c]);
             let src = rng.bytes(len);
             let base = rng.bytes(len);
             let mut a = base.clone();
             let mut b = base;
-            (scalar.mad)(&tbl, &src, &mut a);
-            (simd.mad)(&tbl, &src, &mut b);
+            (scalar.mad)(&stbl, &src, &mut a);
+            (simd.mad)(&vtbl, &src, &mut b);
             assert_eq!(a, b, "{level:?} mad c={c} len={len}");
         }
     }
@@ -107,6 +110,37 @@ fn avx2_encode_matches_scalar() {
 #[test]
 fn avx2_mad_matches_scalar() {
     check_mad_matches(Level::Avx2);
+}
+
+#[test]
+fn gfni_encode_matches_scalar() {
+    check_encode_matches(Level::Gfni);
+}
+
+#[test]
+fn gfni_mad_matches_scalar() {
+    check_mad_matches(Level::Gfni);
+}
+
+#[test]
+fn gfni_mad_matches_scalar_for_every_coefficient() {
+    // Exhaustive over c: a 256-byte buffer holding 0..=255 covers every
+    // (c, x) pair — the affine matrices are proven against gf::mul in full.
+    let Some(simd) = kernels_at(Level::Gfni) else {
+        eprintln!("skipping exhaustive gfni: not supported on this CPU");
+        return;
+    };
+    let scalar = rusty_erasure_core::kernel::Kernels::scalar();
+    let src: Vec<u8> = (0..=255u8).collect();
+    for c in 0..=255u8 {
+        let stbl = (scalar.init)(&[c]);
+        let vtbl = (simd.init)(&[c]);
+        let mut a = vec![0u8; 256];
+        let mut b = vec![0u8; 256];
+        (scalar.mad)(&stbl, &src, &mut a);
+        (simd.mad)(&vtbl, &src, &mut b);
+        assert_eq!(a, b, "gfni mul for c={c}");
+    }
 }
 
 #[test]

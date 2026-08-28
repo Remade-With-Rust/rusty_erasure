@@ -9,7 +9,7 @@ use std::hint::black_box;
 use std::process::ExitCode;
 use std::time::Instant;
 
-use rusty_erasure::{Coder, Matrix, census, coder, kernel::Kernels};
+use rusty_erasure::{Coder, Matrix, census, coder, kernels_named};
 
 const USAGE: &str = "\
 rerasure — erasure coding, remade with Rust
@@ -21,7 +21,7 @@ VERBS:
     bench       encode benchmark on one cell; prints deterministic work counts,
                 per-rep wall stats, a checksum, and the kernel census.
                   --k N --p N --len N --reps N   (default 10 4 65536 6000)
-                  --kernels auto|scalar          (default auto)
+                  --kernels auto|scalar|ssse3|avx2|gfni   (default auto)
     census      run a fixed workload through the shipping path and print the
                 kernel-reach census; exits 1 if a SIMD set was selected but
                 did not carry 100% of the bytes
@@ -79,30 +79,38 @@ fn bench(args: &[String]) -> Result<(), String> {
     let kernels_arg = flags.get("kernels").map(String::as_str).unwrap_or("auto");
 
     let matrix = Matrix::cauchy(k, p).map_err(|e| e.to_string())?;
-    let c = match kernels_arg {
-        "auto" => coder(matrix).map_err(|e| e.to_string())?,
-        "scalar" => Coder::with_kernels(matrix, Kernels::scalar()).map_err(|e| e.to_string())?,
-        other => return Err(format!("--kernels: '{other}' (want auto|scalar)")),
+    let Some(kern) = kernels_named(kernels_arg) else {
+        return Err(format!(
+            "--kernels: '{kernels_arg}' unknown or unsupported on this CPU \
+             (want auto|scalar|ssse3|avx2|gfni)"
+        ));
     };
+    let c = Coder::with_kernels(matrix, kern).map_err(|e| e.to_string())?;
 
     let data = build_stripe(k, len);
     let data_refs: Vec<&[u8]> = data.iter().map(|d| d.as_slice()).collect();
     let mut parity = vec![vec![0u8; len]; p];
 
-    for _ in 0..3 {
-        let mut refs: Vec<&mut [u8]> = parity.iter_mut().map(|b| b.as_mut_slice()).collect();
-        c.encode(&data_refs, &mut refs).map_err(|e| e.to_string())?;
-    }
+    // The ref vectors are built ONCE, outside the timed loop, so the bench
+    // measures the encode path rather than per-rep Vec construction.
+    // (Measured: ~2% on the smallest cell — kept because a probe should not
+    // allocate per iteration on principle, not because it was the tax.)
     let mut per_rep_ns: Vec<u128> = Vec::with_capacity(reps);
-    let total = Instant::now();
-    for _ in 0..reps {
-        let t = Instant::now();
+    let wall;
+    {
         let mut refs: Vec<&mut [u8]> = parity.iter_mut().map(|b| b.as_mut_slice()).collect();
-        c.encode(&data_refs, black_box(&mut refs)).map_err(|e| e.to_string())?;
-        per_rep_ns.push(t.elapsed().as_nanos());
-        black_box(&parity);
+        for _ in 0..3 {
+            c.encode(&data_refs, &mut refs).map_err(|e| e.to_string())?;
+        }
+        let total = Instant::now();
+        for _ in 0..reps {
+            let t = Instant::now();
+            c.encode(&data_refs, black_box(&mut refs)).map_err(|e| e.to_string())?;
+            per_rep_ns.push(t.elapsed().as_nanos());
+        }
+        wall = total.elapsed();
     }
-    let wall = total.elapsed();
+    black_box(&parity);
 
     let checksum = parity.iter().flatten().fold(0u8, |a, &b| a ^ b);
     per_rep_ns.sort_unstable();

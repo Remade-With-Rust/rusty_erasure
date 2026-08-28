@@ -31,11 +31,21 @@ pub static SCALAR_CENSUS_BYTES: AtomicU64 = AtomicU64::new(0);
 /// they process to their census counter.
 #[derive(Clone, Copy, Debug)]
 pub struct Kernels {
+    /// Expand a row-major coefficient block into THIS set's table format.
+    /// **Table formats are kernel-private** (nibble 32 B/coeff for the
+    /// scalar/PSHUFB sets, affine 8 B/coeff for GFNI): tables built by one
+    /// set's `init` are meaningful only to that set's `encode`/`mad` — mixing
+    /// formats produces wrong parity at plausible speed (learned from ISA-L's
+    /// own dispatched-init-vs-avx2-encode mismatch, LEDGER M4).
+    pub init: fn(coeffs: &[u8]) -> alloc::vec::Vec<u8>,
+    /// Bytes per expanded coefficient in this set's format.
+    pub table_bytes: usize,
     /// Full encode: `out[l] = XOR_j (c[l][j] · data[j])` for every output row,
-    /// tables in ISA-L layout (row-major, 32 bytes per coefficient).
+    /// `gftbls` row-major from this set's `init`.
     pub encode: fn(gftbls: &[u8], data: &[&[u8]], out: &mut [&mut [u8]]),
-    /// `dest ^= c · src` for one expanded table (the update path).
-    pub mad: fn(tbl: &[u8; TABLE_BYTES], src: &[u8], dest: &mut [u8]),
+    /// `dest ^= c · src` for one expanded table (`table_bytes` long, from
+    /// this set's `init`) — the update path.
+    pub mad: fn(tbl: &[u8], src: &[u8], dest: &mut [u8]),
     /// Kernel-set name, for reporting.
     pub name: &'static str,
     /// The census counter this set accumulates into.
@@ -46,6 +56,8 @@ impl Kernels {
     /// The scalar set — the permanent oracle and the fallback on every CPU.
     pub const fn scalar() -> Self {
         Self {
+            init: crate::tables::init_tables,
+            table_bytes: TABLE_BYTES,
             encode: scalar_encode,
             mad: scalar_mad,
             name: "scalar",
@@ -71,7 +83,8 @@ fn scalar_encode(gftbls: &[u8], data: &[&[u8]], out: &mut [&mut [u8]]) {
     }
 }
 
-fn scalar_mad(tbl: &[u8; TABLE_BYTES], src: &[u8], dest: &mut [u8]) {
+fn scalar_mad(tbl: &[u8], src: &[u8], dest: &mut [u8]) {
+    let tbl: &[u8; TABLE_BYTES] = tbl.try_into().expect("scalar mad takes a 32-byte table");
     SCALAR_CENSUS_BYTES.fetch_add(src.len() as u64, Ordering::Relaxed);
     for (d, &s) in dest.iter_mut().zip(src) {
         *d ^= table_mul(tbl, s);
