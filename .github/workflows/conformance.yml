@@ -1,0 +1,83 @@
+name: conformance
+
+# The full-grid conformance replay against real ISA-L (mission plan G1).
+#
+# This is the strongest correctness claim the project makes — 902 configurations
+# (every Cauchy k=1..32 x p=1..8 at three lengths, plus every Vandermonde-safe
+# config) replayed through the SHIPPING dispatched path and compared byte for
+# byte. It is quoted in the README and on five crates.io pages.
+#
+# Until now it had never run in CI. The test is `#[ignore]` and env-gated on a
+# ~10 MB vector file that was generated once on a developer machine, so a
+# regression anywhere in the dispatched path across the config grid would not
+# have been caught by anything automated. That is the worst shape for a claim
+# to be in: loud, load-bearing, and unverified since the day it was made.
+#
+# Rather than commit 10 MB of barely-compressible parity data, the vectors are
+# REGENERATED here from upstream ISA-L. That is strictly better than a frozen
+# file: it re-derives the oracle from the reference implementation every run,
+# so a divergence introduced by either side shows up. It is also cheap —
+# `gen_fullgrid.c` needs only `ec_base.c` and the headers, a two-file gcc
+# build with no autotools and no nasm.
+#
+# Scheduled rather than per-push because it is minutes, not seconds, and the
+# per-commit suite already covers the 77-case golden replay that IS committed.
+
+on:
+  schedule:
+    - cron: "41 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  ISAL_TAG: v2.32.1
+
+jobs:
+  full-grid:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # Upstream ISA-L, pinned to the tag every golden vector in corpus/ was
+      # generated from. Source only — never linked into anything we ship.
+      - name: fetch ISA-L ${{ env.ISAL_TAG }}
+        run: |
+          git clone --depth 1 --branch "$ISAL_TAG" https://github.com/intel/isa-l.git /tmp/isa-l
+          echo "ISA-L at $(git -C /tmp/isa-l rev-parse HEAD)"
+
+      - name: build the oracle generator
+        run: |
+          gcc -O2 -I /tmp/isa-l/include \
+            tools/oracle/gen_fullgrid.c /tmp/isa-l/erasure_code/ec_base.c \
+            -o /tmp/genfull
+
+      - name: generate the full grid from real ISA-L
+        run: |
+          /tmp/genfull /tmp/fullgrid.bin
+          ls -l /tmp/fullgrid.bin
+
+      # Replays every case through `coder()` — the dispatched path, so on this
+      # runner it exercises whatever SIMD level the CPU offers, not the scalar
+      # fallback.
+      - name: replay all 902 configurations through the shipping path
+        env:
+          RUSTY_ERASURE_FULLGRID: /tmp/fullgrid.bin
+        run: cargo test -p rusty_erasure --release --test fullgrid -- --ignored --nocapture
+
+  # The browser demo is the org differentiator — erasure coding in wasm with no
+  # server. It had a verification script and no job to run it, so nothing
+  # checked that the demo still worked after a kernel change.
+  wasm-demo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - run: rustup target add wasm32-unknown-unknown
+      - name: build the demo cdylib
+        env:
+          RUSTFLAGS: -C target-feature=+simd128
+        run: cargo build --release -p rusty_erasure-demo --target wasm32-unknown-unknown
+      - name: headless recovery roundtrips
+        run: node tools/check_demo.mjs
