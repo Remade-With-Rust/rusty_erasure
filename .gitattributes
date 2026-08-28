@@ -1,0 +1,26 @@
+# GitHub Linguist: what this repository *is*, versus what is merely kept in it.
+#
+# The language bar was reporting ~6% C, which is true of the files and false of
+# the project: this crate ships no C, links no C, and cannot be built with a C
+# toolchain absent. The C here is the differential ORACLE RIG — small harnesses
+# we wrote that link real ISA-L to generate golden vectors and to provide the
+# competing arm in benchmarks. They are development-only, excluded from every
+# published artifact, and ISA-L itself is never vendored (see .gitignore).
+#
+# `linguist-detectable=false` is the honest attribute for this. The alternatives
+# would each assert something untrue: `linguist-vendored` claims the code is
+# third-party (we wrote it), and `linguist-generated` claims it is machine-
+# emitted (it is hand-written). This one says only what is actually the case —
+# real code, deliberately not part of the language statistics.
+#
+# The files stay tracked on purpose: they are the provenance behind every
+# conformance claim in corpus/LEDGER.md. Deleting them to tidy a graph would
+# throw away the evidence that the claims are checkable.
+tools/oracle/*.c linguist-detectable=false
+
+# Golden vectors and fuzz corpora are data, not source. Marking them keeps a
+# future binary/extensionless heuristic from counting them as a language and
+# collapses their diffs, which are meaningless to review byte by byte.
+corpus/golden/*.bin binary linguist-generated=true
+fuzz/corpus/** binary linguist-generated=true
+fuzz/artifacts/** binary linguist-generated=true
