@@ -1,10 +1,12 @@
 [package]
 name = "rusty_erasure-core"
-description = "GF(2^8) arithmetic, coding matrices, and the scalar erasure-coding kernels for rusty_erasure. no_std + alloc, zero dependencies, forbid(unsafe)."
+description = "Core of the rusty_erasure ISA-L remake: GF(2^8) arithmetic, coding matrices, DecodePlan and the scalar kernels that are the permanent conformance oracle. no_std + alloc, zero dependencies, forbid(unsafe_code). MIT OR Apache-2.0."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+documentation = "https://docs.rs/rusty_erasure-core"
+readme = "../../README.md"
 homepage.workspace = true
 rust-version.workspace = true
 keywords = ["erasure-coding", "reed-solomon", "galois-field", "no-std", "isa-l"]

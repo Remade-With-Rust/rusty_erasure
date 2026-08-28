@@ -1,10 +1,12 @@
 [package]
 name = "rusty_erasure-alloc"
-description = "The allocator seam for rusty_erasure: one crate, one pin, so a deliberate global allocator choice is made once in the deliverables rather than forced on every library consumer."
+description = "The rusty_alloc seam for rusty_erasure: one crate, one exact pin, so the global allocator is a deliberate choice made once in the deliverables rather than forced on every library consumer. MIT OR Apache-2.0."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+documentation = "https://docs.rs/rusty_erasure-alloc"
+readme = "../../README.md"
 homepage.workspace = true
 rust-version.workspace = true
 keywords = ["allocator", "memory", "rusty-alloc", "seam"]

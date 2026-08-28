@@ -1,10 +1,12 @@
 [package]
 name = "rusty_erasure-accel"
-description = "SIMD twins of rusty_erasure-core's scalar kernels: x86-64 SSSE3/AVX2 (GFNI/AVX-512, NEON, wasm SIMD128 to follow). The workspace's only unsafe crate."
+description = "SIMD kernels for rusty_erasure: x86-64 SSSE3/AVX2 nibble tables and AVX2-GFNI affine transforms, aarch64 NEON, and wasm SIMD128. The workspace's only unsafe crate — every kernel gated byte-identical against the safe scalar oracle on every architecture. MIT OR Apache-2.0."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+documentation = "https://docs.rs/rusty_erasure-accel"
+readme = "../../README.md"
 homepage.workspace = true
 rust-version.workspace = true
 keywords = ["erasure-coding", "simd", "avx2", "galois-field", "isa-l"]

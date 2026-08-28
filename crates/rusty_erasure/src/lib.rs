@@ -18,6 +18,14 @@ extern crate alloc;
 
 pub mod isal;
 
+/// The README compiled as doctests, so its examples cannot rot into something
+/// that no longer builds. A published README is the first thing anyone tries;
+/// this makes `cargo test` the thing that keeps it honest. Only `rust` blocks
+/// are compiled — the `toml` and `bash` blocks are inert to rustdoc.
+#[cfg(doctest)]
+#[doc = include_str!("../../../README.md")]
+pub struct ReadmeDoctests;
+
 pub use rusty_erasure_core::{
     CodeError, Coder, DecodePlan, Matrix, MatrixError, RecoverError, gf, kernel, matrix, tables,
 };

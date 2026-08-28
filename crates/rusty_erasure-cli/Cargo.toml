@@ -1,10 +1,14 @@
 [package]
 name = "rusty_erasure-cli"
-description = "rerasure — the rusty_erasure CLI: encode, recover, verify, bench, and the kernel-reach census."
+description = "rerasure, the rusty_erasure CLI: encode, recover and verify shards, plus the benchmark harness and the always-on kernel-reach census. MIT OR Apache-2.0."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+documentation = "https://docs.rs/rusty_erasure-cli"
+readme = "../../README.md"
+keywords = ["erasure-coding", "reed-solomon", "raid", "cli", "isa-l"]
+categories = ["command-line-utilities", "algorithms", "encoding"]
 homepage.workspace = true
 rust-version.workspace = true
 publish = true

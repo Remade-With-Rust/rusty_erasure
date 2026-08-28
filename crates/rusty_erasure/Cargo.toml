@@ -1,10 +1,11 @@
 [package]
 name = "rusty_erasure"
-description = "Intel ISA-L's erasure coding, remade with Rust: matrix-flexible GF(2^8) Reed-Solomon encode, incremental update, and recovery. Safe core, validated parameters, no C, no GPL."
+description = "Intel ISA-L's erasure coding, remade with Rust: matrix-flexible GF(2^8) Reed-Solomon encode, incremental update and first-class recovery, plus RAID-6 P+Q. Byte-identical to ISA-L, faster than its AVX2-GFNI assembly, validated parameters instead of undefined behaviour. No C, no NASM, no GPL. MIT OR Apache-2.0."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+documentation = "https://docs.rs/rusty_erasure"
 homepage.workspace = true
 rust-version.workspace = true
 readme = "../../README.md"
