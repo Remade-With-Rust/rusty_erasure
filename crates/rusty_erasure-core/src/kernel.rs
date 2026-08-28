@@ -18,6 +18,12 @@ use crate::tables::{TABLE_BYTES, table_mul};
 /// measured fact, not an assumption.
 pub static SCALAR_CENSUS_BYTES: AtomicU64 = AtomicU64::new(0);
 
+/// Full-encode kernel: `out[l] = XOR_j (c[l][j] · data[j])` for every row.
+pub type EncodeFn = fn(gftbls: &[u8], data: &[&[u8]], out: &mut [&mut [u8]]);
+
+/// Fused-update kernel: fold source `vec_i` into every output row in one pass.
+pub type UpdateFn = fn(gftbls: &[u8], k: usize, vec_i: usize, src: &[u8], outs: &mut [&mut [u8]]);
+
 /// A pluggable kernel set. The choice is made ONCE, at coder construction or
 /// the facade surface (never inside a loop — the dispatch-placement law), and
 /// core stays free of all detection machinery: this crate only ever provides
@@ -42,7 +48,7 @@ pub struct Kernels {
     pub table_bytes: usize,
     /// Full encode: `out[l] = XOR_j (c[l][j] · data[j])` for every output row,
     /// `gftbls` row-major from this set's `init`.
-    pub encode: fn(gftbls: &[u8], data: &[&[u8]], out: &mut [&mut [u8]]),
+    pub encode: EncodeFn,
     /// `dest ^= c · src` for one expanded table (`table_bytes` long, from
     /// this set's `init`).
     pub mad: fn(tbl: &[u8], src: &[u8], dest: &mut [u8]),
@@ -50,7 +56,7 @@ pub struct Kernels {
     /// one pass over the source (`outs[l] ^= c[l][vec_i] · src`), tables for
     /// row `l` at `(l*k + vec_i) * table_bytes` in `gftbls`. One source read
     /// instead of `outs.len()` — the brick that fixed S7's shape.
-    pub update: fn(gftbls: &[u8], k: usize, vec_i: usize, src: &[u8], outs: &mut [&mut [u8]]),
+    pub update: UpdateFn,
     /// Kernel-set name, for reporting.
     pub name: &'static str,
     /// The census counter this set accumulates into.
@@ -78,7 +84,9 @@ fn scalar_update(gftbls: &[u8], k: usize, vec_i: usize, src: &[u8], outs: &mut [
     let tbls: alloc::vec::Vec<&[u8; TABLE_BYTES]> = (0..outs.len())
         .map(|l| {
             let start = (l * k + vec_i) * TABLE_BYTES;
-            gftbls[start..start + TABLE_BYTES].try_into().expect("caller-validated tables")
+            gftbls[start..start + TABLE_BYTES]
+                .try_into()
+                .expect("caller-validated tables")
         })
         .collect();
     for (i, &s) in src.iter().enumerate() {
@@ -96,8 +104,9 @@ fn scalar_encode(gftbls: &[u8], data: &[&[u8]], out: &mut [&mut [u8]]) {
         dest.fill(0);
         for (j, src) in data.iter().enumerate() {
             let start = (l * k + j) * TABLE_BYTES;
-            let tbl: &[u8; TABLE_BYTES] =
-                gftbls[start..start + TABLE_BYTES].try_into().expect("caller-validated tables");
+            let tbl: &[u8; TABLE_BYTES] = gftbls[start..start + TABLE_BYTES]
+                .try_into()
+                .expect("caller-validated tables");
             for (d, &s) in dest.iter_mut().zip(*src) {
                 *d ^= table_mul(tbl, s);
             }
@@ -117,7 +126,10 @@ fn tbl32(gftbls: &[u8], index: usize) -> Result<&[u8; TABLE_BYTES], CodeError> {
     let start = index * TABLE_BYTES;
     let slice = gftbls
         .get(start..start + TABLE_BYTES)
-        .ok_or(CodeError::ShardCount { expected: index + 1, got: gftbls.len() / TABLE_BYTES })?;
+        .ok_or(CodeError::ShardCount {
+            expected: index + 1,
+            got: gftbls.len() / TABLE_BYTES,
+        })?;
     // Infallible: the slice is exactly TABLE_BYTES long.
     Ok(slice.try_into().expect("length checked above"))
 }
@@ -126,7 +138,11 @@ fn tbl32(gftbls: &[u8], index: usize) -> Result<&[u8; TABLE_BYTES], CodeError> {
 /// (ISA-L's `gf_vect_mul`, without its len-multiple-of-32 restriction).
 pub fn vect_mul(dest: &mut [u8], tbl: &[u8; TABLE_BYTES], src: &[u8]) -> Result<(), CodeError> {
     if dest.len() != src.len() {
-        return Err(CodeError::ShardLength { index: 0, expected: dest.len(), got: src.len() });
+        return Err(CodeError::ShardLength {
+            index: 0,
+            expected: dest.len(),
+            got: src.len(),
+        });
     }
     for (d, &s) in dest.iter_mut().zip(src) {
         *d = table_mul(tbl, s);
@@ -138,7 +154,11 @@ pub fn vect_mul(dest: &mut [u8], tbl: &[u8; TABLE_BYTES], src: &[u8]) -> Result<
 /// (ISA-L's `gf_vect_mad`).
 pub fn vect_mad(dest: &mut [u8], tbl: &[u8; TABLE_BYTES], src: &[u8]) -> Result<(), CodeError> {
     if dest.len() != src.len() {
-        return Err(CodeError::ShardLength { index: 0, expected: dest.len(), got: src.len() });
+        return Err(CodeError::ShardLength {
+            index: 0,
+            expected: dest.len(),
+            got: src.len(),
+        });
     }
     for (d, &s) in dest.iter_mut().zip(src) {
         *d ^= table_mul(tbl, s);
@@ -158,7 +178,11 @@ pub fn vect_dot_prod(dest: &mut [u8], gftbls: &[u8], srcs: &[&[u8]]) -> Result<(
     }
     for (index, src) in srcs.iter().enumerate() {
         if src.len() != dest.len() {
-            return Err(CodeError::ShardLength { index, expected: dest.len(), got: src.len() });
+            return Err(CodeError::ShardLength {
+                index,
+                expected: dest.len(),
+                got: src.len(),
+            });
         }
     }
     dest.fill(0);

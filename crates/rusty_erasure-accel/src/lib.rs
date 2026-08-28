@@ -57,7 +57,11 @@ pub fn kernels() -> Option<Kernels> {
     {
         wasm::kernels()
     }
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "wasm32")))]
+    #[cfg(not(any(
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        target_arch = "wasm32"
+    )))]
     {
         None
     }
@@ -79,7 +83,11 @@ pub fn raid_kernels() -> Option<RaidKernels> {
     {
         wasm::raid_kernels()
     }
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "wasm32")))]
+    #[cfg(not(any(
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        target_arch = "wasm32"
+    )))]
     {
         None
     }

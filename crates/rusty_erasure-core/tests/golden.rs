@@ -1,4 +1,4 @@
-﻿//! Conformance gates against ISA-L v2.32.1's own GF(2^8) tables, checked in
+//! Conformance gates against ISA-L v2.32.1's own GF(2^8) tables, checked in
 //! as golden data (`corpus/golden/`, provenance in `PROVENANCE.md`).
 //!
 //! These tests are exhaustive and deterministic — one run is a verdict, on any
@@ -49,8 +49,8 @@ fn inv_matches_isal_for_all_256_values() {
 #[test]
 fn generator_powers_match_isal_exp_table() {
     let mut x: u8 = 1;
-    for i in 0..255 {
-        assert_eq!(x, GFF[i], "2^{i}");
+    for (i, &expect) in GFF.iter().enumerate().take(255) {
+        assert_eq!(x, expect, "2^{i}");
         x = gf::mul(x, 2);
     }
     assert_eq!(x, 1, "generator order must be 255");
@@ -67,7 +67,15 @@ fn isal_log_table_is_inverse_of_exp_table() {
 fn rs_matrix_matches_reference_construction() {
     // Independent transcription of gf_gen_rs_matrix, multiplied through the
     // GOLDEN table (never our own gf), for safe-region configs.
-    for &(k, p) in &[(2usize, 2usize), (3, 30), (4, 21), (5, 5), (10, 4), (21, 4), (200, 3)] {
+    for &(k, p) in &[
+        (2usize, 2usize),
+        (3, 30),
+        (4, 21),
+        (5, 5),
+        (10, 4),
+        (21, 4),
+        (200, 3),
+    ] {
         let m = k + p;
         let mut expect = vec![0u8; m * k];
         for i in 0..k {
@@ -115,10 +123,18 @@ fn expanded_tables_reproduce_every_product() {
         tables::mul_table32(c, &mut tbl);
         for j in 0..16u8 {
             assert_eq!(tbl[j as usize], isal_mul(c, j), "tbl low c={c} j={j}");
-            assert_eq!(tbl[16 + j as usize], isal_mul(c, j << 4), "tbl high c={c} j={j}");
+            assert_eq!(
+                tbl[16 + j as usize],
+                isal_mul(c, j << 4),
+                "tbl high c={c} j={j}"
+            );
         }
         for x in 0..=255u8 {
-            assert_eq!(tables::table_mul(&tbl, x), isal_mul(c, x), "table_mul c={c} x={x}");
+            assert_eq!(
+                tables::table_mul(&tbl, x),
+                isal_mul(c, x),
+                "table_mul c={c} x={x}"
+            );
         }
     }
 }
@@ -156,11 +172,30 @@ fn affine_matrices_match_isal_gfni_table() {
 #[test]
 fn vandermonde_safe_region_is_enforced() {
     // Inside the documented region: accepted.
-    for &(k, p) in &[(1usize, 200usize), (3, 100), (4, 21), (5, 5), (21, 4), (10, 4), (200, 3), (252, 3)] {
-        assert!(Matrix::reed_solomon(k, p).is_ok(), "k={k} p={p} should be safe");
+    for &(k, p) in &[
+        (1usize, 200usize),
+        (3, 100),
+        (4, 21),
+        (5, 5),
+        (21, 4),
+        (10, 4),
+        (200, 3),
+        (252, 3),
+    ] {
+        assert!(
+            Matrix::reed_solomon(k, p).is_ok(),
+            "k={k} p={p} should be safe"
+        );
     }
     // Outside it: refused with the typed error.
-    for &(k, p) in &[(4usize, 22usize), (5, 6), (6, 5), (22, 4), (10, 5), (100, 8)] {
+    for &(k, p) in &[
+        (4usize, 22usize),
+        (5, 6),
+        (6, 5),
+        (22, 4),
+        (10, 5),
+        (100, 8),
+    ] {
         assert!(
             matches!(
                 Matrix::reed_solomon(k, p),

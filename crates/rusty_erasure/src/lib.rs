@@ -45,14 +45,13 @@ pub mod raid {
     /// RAID-6 P+Q of ≥2 sources — dispatched `pq_gen`.
     pub fn pq_gen(sources: &[&[u8]], p: &mut [u8], q: &mut [u8]) -> Result<(), CodeError> {
         #[cfg(feature = "accel")]
-        if let Some((_, pq)) = rusty_erasure_accel::raid_kernels() {
-            if sources.len() >= 2
-                && p.len() == q.len()
-                && sources.iter().all(|s| s.len() == p.len())
-            {
-                pq(sources, p, q);
-                return Ok(());
-            }
+        if let Some((_, pq)) = rusty_erasure_accel::raid_kernels()
+            && sources.len() >= 2
+            && p.len() == q.len()
+            && sources.iter().all(|s| s.len() == p.len())
+        {
+            pq(sources, p, q);
+            return Ok(());
         }
         core_raid::pq_gen(sources, p, q)
     }
@@ -162,8 +161,7 @@ pub mod census {
     /// the shipping path is a defect, not a statistic (the rusty_zstd law).
     pub fn read() -> Census {
         Census {
-            scalar_bytes:
-                crate::kernel::SCALAR_CENSUS_BYTES.load(Ordering::Relaxed),
+            scalar_bytes: crate::kernel::SCALAR_CENSUS_BYTES.load(Ordering::Relaxed),
             accel_bytes: {
                 #[cfg(feature = "accel")]
                 {

@@ -183,8 +183,7 @@ pub(crate) mod imp {
             assert_eq!(s.len(), parity.len(), "xor length mismatch");
         }
         assert!(sources.len() >= 2, "xor needs two sources");
-        ACCEL_CENSUS_BYTES
-            .fetch_add((sources.len() * parity.len()) as u64, Ordering::Relaxed);
+        ACCEL_CENSUS_BYTES.fetch_add((sources.len() * parity.len()) as u64, Ordering::Relaxed);
         let n = parity.len();
         let mut i = 0usize;
         // SAFETY: simd128 statically enabled; i + 32 <= n bounds every access.
@@ -222,9 +221,36 @@ pub(crate) mod imp {
         let n = p.len();
         let last = sources.len() - 1;
         let mut i = 0usize;
-        // SAFETY: simd128 statically enabled; i + 16 <= n bounds every access.
+        // SAFETY: simd128 statically enabled; loop bounds guard every access.
         unsafe {
             let poly = u8x16_splat(0x1d);
+            // Quad-chunk main loop: four independent ×2 recurrence chains
+            // hide the per-chunk serial latency (the x86 pq unroll deployed).
+            while i + 64 <= n {
+                let lp = sources[last].as_ptr().add(i);
+                let mut pw = [
+                    v128_load(lp as *const v128),
+                    v128_load(lp.add(16) as *const v128),
+                    v128_load(lp.add(32) as *const v128),
+                    v128_load(lp.add(48) as *const v128),
+                ];
+                let mut qw = pw;
+                for j in (0..last).rev() {
+                    let sp = sources[j].as_ptr().add(i);
+                    for c in 0..4 {
+                        let s = v128_load(sp.add(c * 16) as *const v128);
+                        pw[c] = v128_xor(pw[c], s);
+                        let mask = i8x16_shr(qw[c], 7);
+                        let doubled = v128_xor(i8x16_shl(qw[c], 1), v128_and(mask, poly));
+                        qw[c] = v128_xor(s, doubled);
+                    }
+                }
+                for c in 0..4 {
+                    v128_store(p.as_mut_ptr().add(i + c * 16) as *mut v128, pw[c]);
+                    v128_store(q.as_mut_ptr().add(i + c * 16) as *mut v128, qw[c]);
+                }
+                i += 64;
+            }
             while i + 16 <= n {
                 let s_last = v128_load(sources[last].as_ptr().add(i) as *const v128);
                 let mut pw = s_last;
@@ -255,7 +281,13 @@ pub(crate) mod imp {
     }
 
     /// Fused update: one pass over the source folds it into every row.
-    pub(crate) fn update_simd128(gftbls: &[u8], k: usize, vec_i: usize, src: &[u8], outs: &mut [&mut [u8]]) {
+    pub(crate) fn update_simd128(
+        gftbls: &[u8],
+        k: usize,
+        vec_i: usize,
+        src: &[u8],
+        outs: &mut [&mut [u8]],
+    ) {
         assert!(vec_i < k, "source index in range");
         assert!(
             gftbls.len() >= ((outs.len().saturating_sub(1)) * k + vec_i + 1) * TABLE_BYTES,
@@ -268,10 +300,13 @@ pub(crate) mod imp {
         let n = src.len();
         for row_base in (0..outs.len()).step_by(4) {
             let g = (outs.len() - row_base).min(4);
-            let mut stbls: [&[u8; TABLE_BYTES]; 4] = [gftbls[..TABLE_BYTES].try_into().expect("checked"); 4];
+            let mut stbls: [&[u8; TABLE_BYTES]; 4] =
+                [gftbls[..TABLE_BYTES].try_into().expect("checked"); 4];
             for (ri, st) in stbls.iter_mut().enumerate().take(g) {
                 let start = ((row_base + ri) * k + vec_i) * TABLE_BYTES;
-                *st = gftbls[start..start + TABLE_BYTES].try_into().expect("checked");
+                *st = gftbls[start..start + TABLE_BYTES]
+                    .try_into()
+                    .expect("checked");
             }
             let group = &mut outs[row_base..row_base + g];
             let mut i = 0usize;

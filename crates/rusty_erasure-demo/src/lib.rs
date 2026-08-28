@@ -22,7 +22,9 @@ fn stripe(k: usize, len: usize) -> Vec<Vec<u8>> {
         z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
         z ^ (z >> 31)
     };
-    (0..k).map(|_| (0..len).map(|_| next() as u8).collect()).collect()
+    (0..k)
+        .map(|_| (0..len).map(|_| next() as u8).collect())
+        .collect()
 }
 
 /// Encode `k+p` over `len`-byte shards, drop `drop_n` shards (spread across
@@ -30,7 +32,9 @@ fn stripe(k: usize, len: usize) -> Vec<Vec<u8>> {
 /// Returns 0 on success; a negative code names the failing stage.
 #[unsafe(no_mangle)]
 pub extern "C" fn demo_roundtrip(k: usize, p: usize, len: usize, drop_n: usize) -> i32 {
-    let Ok(matrix) = Matrix::cauchy(k, p) else { return -1 };
+    let Ok(matrix) = Matrix::cauchy(k, p) else {
+        return -1;
+    };
     let Ok(c) = coder(matrix) else { return -2 };
     if drop_n > p {
         return -3;
@@ -46,7 +50,11 @@ pub extern "C" fn demo_roundtrip(k: usize, p: usize, len: usize, drop_n: usize) 
     }
     // Drop every other shard index until drop_n are gone.
     let n = k + p;
-    let missing: Vec<usize> = (0..n).step_by(2).chain((1..n).step_by(2)).take(drop_n).collect();
+    let missing: Vec<usize> = (0..n)
+        .step_by(2)
+        .chain((1..n).step_by(2))
+        .take(drop_n)
+        .collect();
     let mut missing = missing;
     missing.sort_unstable();
     let shards: Vec<Option<&[u8]>> = (0..n)
@@ -80,7 +88,9 @@ pub extern "C" fn demo_roundtrip(k: usize, p: usize, len: usize, drop_n: usize) 
 /// MB/s). Returns a parity checksum so the work cannot be optimized away.
 #[unsafe(no_mangle)]
 pub extern "C" fn demo_bench(k: usize, p: usize, len: usize, reps: usize) -> i32 {
-    let Ok(matrix) = Matrix::cauchy(k, p) else { return -1 };
+    let Ok(matrix) = Matrix::cauchy(k, p) else {
+        return -1;
+    };
     let Ok(c) = coder(matrix) else { return -1 };
     let data = stripe(k, len);
     let data_refs: Vec<&[u8]> = data.iter().map(|d| d.as_slice()).collect();

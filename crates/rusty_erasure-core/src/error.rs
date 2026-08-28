@@ -125,7 +125,10 @@ impl fmt::Display for RecoverError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             Self::TooManyMissing { missing, p } => {
-                write!(f, "{missing} shards missing, but only {p} parity shards exist")
+                write!(
+                    f,
+                    "{missing} shards missing, but only {p} parity shards exist"
+                )
             }
             Self::Matrix(e) => write!(f, "recovery matrix error: {e}"),
             Self::Code(e) => write!(f, "recovery shard error: {e}"),

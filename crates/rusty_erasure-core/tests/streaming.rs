@@ -64,7 +64,9 @@ fn segmented_processing_is_byte_identical_to_one_shot() {
             })
             .collect();
         let mut orefs: Vec<&mut [u8]> = rec.iter_mut().map(|s| &mut s[a..b]).collect();
-        coder.recover(&shards, &missing, &mut orefs).expect("segment recover");
+        coder
+            .recover(&shards, &missing, &mut orefs)
+            .expect("segment recover");
     }
     assert_eq!(rec[0], data[1], "segmented recovery of a source");
     assert_eq!(rec[1], whole[2], "segmented recovery of a parity");

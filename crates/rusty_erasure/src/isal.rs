@@ -16,10 +16,10 @@
 use core::sync::atomic::Ordering;
 
 use rusty_erasure_core::error::{CodeError, MatrixError};
+use rusty_erasure_core::kernel::Kernels;
 use rusty_erasure_core::kernel::SCALAR_CENSUS_BYTES;
 use rusty_erasure_core::matrix::invert_gauss_jordan;
 use rusty_erasure_core::tables::{TABLE_BYTES, mul_table32, table_mul};
-use rusty_erasure_core::kernel::Kernels;
 use rusty_erasure_core::{gf, matrix};
 
 /// The best kernel set consuming ISA-L NIBBLE-format tables — never GFNI,
@@ -44,7 +44,10 @@ pub const fn gf_inv(a: u8) -> u8 {
 
 fn check_matrix_buf(a: &[u8], m: usize, k: usize) -> Result<(), MatrixError> {
     if k == 0 || m < k || !k.checked_mul(m).is_some_and(|need| a.len() >= need) {
-        return Err(MatrixError::Dimensions { k, p: m.saturating_sub(k) });
+        return Err(MatrixError::Dimensions {
+            k,
+            p: m.saturating_sub(k),
+        });
     }
     Ok(())
 }
@@ -110,13 +113,23 @@ pub fn gf_invert_matrix(
 /// `ec_init_tables`. Pass the parity block (`&a[k*k..]`), per their calling
 /// convention.
 pub fn ec_init_tables(k: usize, rows: usize, a: &[u8], gftbls: &mut [u8]) -> Result<(), CodeError> {
-    let coeffs = k.checked_mul(rows).ok_or(CodeError::ShardCount { expected: rows, got: 0 })?;
+    let coeffs = k.checked_mul(rows).ok_or(CodeError::ShardCount {
+        expected: rows,
+        got: 0,
+    })?;
     if a.len() < coeffs {
-        return Err(CodeError::ShardCount { expected: coeffs, got: a.len() });
+        return Err(CodeError::ShardCount {
+            expected: coeffs,
+            got: a.len(),
+        });
     }
     let need = coeffs * TABLE_BYTES;
     if gftbls.len() < need {
-        return Err(CodeError::ShardLength { index: 0, expected: need, got: gftbls.len() });
+        return Err(CodeError::ShardLength {
+            index: 0,
+            expected: need,
+            got: gftbls.len(),
+        });
     }
     let mut tbl = [0u8; TABLE_BYTES];
     for (i, &c) in a[..coeffs].iter().enumerate() {
@@ -131,16 +144,26 @@ fn tbl_at(gftbls: &[u8], index: usize) -> Result<&[u8; TABLE_BYTES], CodeError> 
     gftbls
         .get(start..start + TABLE_BYTES)
         .and_then(|s| s.try_into().ok())
-        .ok_or(CodeError::ShardCount { expected: index + 1, got: gftbls.len() / TABLE_BYTES })
+        .ok_or(CodeError::ShardCount {
+            expected: index + 1,
+            got: gftbls.len() / TABLE_BYTES,
+        })
 }
 
 fn check_vects(len: usize, count: usize, bufs: &[&[u8]]) -> Result<(), CodeError> {
     if bufs.len() != count {
-        return Err(CodeError::ShardCount { expected: count, got: bufs.len() });
+        return Err(CodeError::ShardCount {
+            expected: count,
+            got: bufs.len(),
+        });
     }
     for (index, b) in bufs.iter().enumerate() {
         if b.len() < len {
-            return Err(CodeError::ShardLength { index, expected: len, got: b.len() });
+            return Err(CodeError::ShardLength {
+                index,
+                expected: len,
+                got: b.len(),
+            });
         }
     }
     Ok(())
@@ -158,16 +181,27 @@ pub fn ec_encode_data(
 ) -> Result<(), CodeError> {
     check_vects(len, k, data)?;
     if coding.len() != rows {
-        return Err(CodeError::ShardCount { expected: rows, got: coding.len() });
+        return Err(CodeError::ShardCount {
+            expected: rows,
+            got: coding.len(),
+        });
     }
     for (index, b) in coding.iter().enumerate() {
         if b.len() < len {
-            return Err(CodeError::ShardLength { index: k + index, expected: len, got: b.len() });
+            return Err(CodeError::ShardLength {
+                index: k + index,
+                expected: len,
+                got: b.len(),
+            });
         }
     }
     let need = rows * k * TABLE_BYTES;
     if gftbls.len() < need {
-        return Err(CodeError::ShardLength { index: 0, expected: need, got: gftbls.len() });
+        return Err(CodeError::ShardLength {
+            index: 0,
+            expected: need,
+            got: gftbls.len(),
+        });
     }
     // Exact-length buffers (the common case) go through the dispatched
     // NIBBLE-format kernels — this function's `gftbls` contract IS the
@@ -207,14 +241,25 @@ pub fn ec_encode_data_update(
         return Err(CodeError::ShardIndex { index: vec_i, k });
     }
     if data.len() < len {
-        return Err(CodeError::ShardLength { index: vec_i, expected: len, got: data.len() });
+        return Err(CodeError::ShardLength {
+            index: vec_i,
+            expected: len,
+            got: data.len(),
+        });
     }
     if coding.len() != rows {
-        return Err(CodeError::ShardCount { expected: rows, got: coding.len() });
+        return Err(CodeError::ShardCount {
+            expected: rows,
+            got: coding.len(),
+        });
     }
     for (index, b) in coding.iter().enumerate() {
         if b.len() < len {
-            return Err(CodeError::ShardLength { index: k + index, expected: len, got: b.len() });
+            return Err(CodeError::ShardLength {
+                index: k + index,
+                expected: len,
+                got: b.len(),
+            });
         }
     }
     if data.len() == len && coding.iter().all(|c| c.len() == len) {
@@ -244,10 +289,17 @@ pub fn gf_vect_dot_prod(
 ) -> Result<(), CodeError> {
     check_vects(len, vlen, src)?;
     if dest.len() < len {
-        return Err(CodeError::ShardLength { index: 0, expected: len, got: dest.len() });
+        return Err(CodeError::ShardLength {
+            index: 0,
+            expected: len,
+            got: dest.len(),
+        });
     }
     if gftbls.len() < vlen * TABLE_BYTES {
-        return Err(CodeError::ShardCount { expected: vlen, got: gftbls.len() / TABLE_BYTES });
+        return Err(CodeError::ShardCount {
+            expected: vlen,
+            got: gftbls.len() / TABLE_BYTES,
+        });
     }
     if dest.len() == len && src.iter().all(|s| s.len() == len) {
         let mut out = [&mut dest[..len]];
@@ -277,7 +329,10 @@ pub fn gf_vect_mad(
     dest: &mut [u8],
 ) -> Result<(), CodeError> {
     if vec_i >= vec {
-        return Err(CodeError::ShardIndex { index: vec_i, k: vec });
+        return Err(CodeError::ShardIndex {
+            index: vec_i,
+            k: vec,
+        });
     }
     if src.len() < len || dest.len() < len {
         return Err(CodeError::ShardLength {
@@ -305,8 +360,12 @@ pub fn gf_vect_mad(
 /// otherwise, as ISA-L returns nonzero). The typed kernel
 /// [`rusty_erasure_core::kernel::vect_mul`] has no such restriction.
 pub fn gf_vect_mul(len: usize, gftbl: &[u8], src: &[u8], dest: &mut [u8]) -> Result<(), CodeError> {
-    if len % 32 != 0 {
-        return Err(CodeError::ShardLength { index: 0, expected: len - (len % 32), got: len });
+    if !len.is_multiple_of(32) {
+        return Err(CodeError::ShardLength {
+            index: 0,
+            expected: len - (len % 32),
+            got: len,
+        });
     }
     if src.len() < len || dest.len() < len {
         return Err(CodeError::ShardLength {

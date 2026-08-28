@@ -22,7 +22,7 @@ const GF8POLY: u64 = 0x1d1d_1d1d_1d1d_1d1d;
 #[inline]
 const fn gf2_mul2_lanes(q: u64) -> u64 {
     let m = q & BIT7;
-    ((q << 1) & NOTBIT0) ^ ((((m << 1).wrapping_sub(m >> 7)) & GF8POLY))
+    ((q << 1) & NOTBIT0) ^ (((m << 1).wrapping_sub(m >> 7)) & GF8POLY)
 }
 
 #[inline]
@@ -32,11 +32,18 @@ const fn gf2_mul2_byte(q: u8) -> u8 {
 
 fn check_lens(sources: &[&[u8]], len: usize, min_sources: usize) -> Result<(), CodeError> {
     if sources.len() < min_sources {
-        return Err(CodeError::ShardCount { expected: min_sources, got: sources.len() });
+        return Err(CodeError::ShardCount {
+            expected: min_sources,
+            got: sources.len(),
+        });
     }
     for (index, s) in sources.iter().enumerate() {
         if s.len() != len {
-            return Err(CodeError::ShardLength { index, expected: len, got: s.len() });
+            return Err(CodeError::ShardLength {
+                index,
+                expected: len,
+                got: s.len(),
+            });
         }
     }
     Ok(())
@@ -98,7 +105,11 @@ pub fn xor_check(vects: &[&[u8]]) -> Result<bool, CodeError> {
 pub fn pq_gen(sources: &[&[u8]], p: &mut [u8], q: &mut [u8]) -> Result<(), CodeError> {
     let len = p.len();
     if q.len() != len {
-        return Err(CodeError::ShardLength { index: 1, expected: len, got: q.len() });
+        return Err(CodeError::ShardLength {
+            index: 1,
+            expected: len,
+            got: q.len(),
+        });
     }
     check_lens(sources, len, 2)?;
     crate::kernel::SCALAR_CENSUS_BYTES.fetch_add(
@@ -172,14 +183,14 @@ pub struct PqMismatch {
 
 /// Check sources against P and Q — ISA-L `pq_check`. `Ok(None)` means
 /// consistent; `Ok(Some(_))` names the first mismatch.
-pub fn pq_check(
-    sources: &[&[u8]],
-    p: &[u8],
-    q: &[u8],
-) -> Result<Option<PqMismatch>, CodeError> {
+pub fn pq_check(sources: &[&[u8]], p: &[u8], q: &[u8]) -> Result<Option<PqMismatch>, CodeError> {
     let len = p.len();
     if q.len() != len {
-        return Err(CodeError::ShardLength { index: 1, expected: len, got: q.len() });
+        return Err(CodeError::ShardLength {
+            index: 1,
+            expected: len,
+            got: q.len(),
+        });
     }
     check_lens(sources, len, 2)?;
     let last = sources.len() - 1;
@@ -196,10 +207,16 @@ pub fn pq_check(
                 qb = s ^ gf2_mul2_byte(qb);
             }
             if p[i] != pb {
-                return Some(PqMismatch { index: i, parity: PqParity::P });
+                return Some(PqMismatch {
+                    index: i,
+                    parity: PqParity::P,
+                });
             }
             if q[i] != qb {
-                return Some(PqMismatch { index: i, parity: PqParity::Q });
+                return Some(PqMismatch {
+                    index: i,
+                    parity: PqParity::Q,
+                });
             }
         }
         None

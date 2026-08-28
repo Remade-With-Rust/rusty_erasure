@@ -38,7 +38,10 @@ impl<'a> Cursor<'a> {
     ignore = "77-case byte-identity replay is deterministic and UB-free; too slow interpreted"
 )]
 fn encode_tables_and_update_match_isal_vectors() {
-    let mut c = Cursor { buf: VECTORS, pos: 0 };
+    let mut c = Cursor {
+        buf: VECTORS,
+        pos: 0,
+    };
     assert_eq!(c.take(4), b"REV1", "vector file magic");
     let count = c.u32();
     assert!(count > 0);
@@ -65,13 +68,17 @@ fn encode_tables_and_update_match_isal_vectors() {
         // including its 64-bit fast-path construction.
         assert_eq!(coder.gftbls(), gftbls, "{tag}: gftbls");
 
-        let data: Vec<&[u8]> = (0..k).map(|j| &data_bytes[j * len..(j + 1) * len]).collect();
+        let data: Vec<&[u8]> = (0..k)
+            .map(|j| &data_bytes[j * len..(j + 1) * len])
+            .collect();
 
         // One-shot encode.
         let mut parity = vec![vec![0u8; len]; p];
         {
             let mut refs: Vec<&mut [u8]> = parity.iter_mut().map(|b| b.as_mut_slice()).collect();
-            coder.encode(&data, &mut refs).unwrap_or_else(|e| panic!("{tag}: encode: {e}"));
+            coder
+                .encode(&data, &mut refs)
+                .unwrap_or_else(|e| panic!("{tag}: encode: {e}"));
         }
         let flat: Vec<u8> = parity.iter().flat_map(|b| b.iter().copied()).collect();
         assert_eq!(flat, parity_expect, "{tag}: encode output");
@@ -82,7 +89,9 @@ fn encode_tables_and_update_match_isal_vectors() {
         {
             let mut refs: Vec<&mut [u8]> = parity2.iter_mut().map(|b| b.as_mut_slice()).collect();
             for (j, d) in data.iter().enumerate() {
-                coder.update(j, d, &mut refs).unwrap_or_else(|e| panic!("{tag}: update {j}: {e}"));
+                coder
+                    .update(j, d, &mut refs)
+                    .unwrap_or_else(|e| panic!("{tag}: update {j}: {e}"));
             }
         }
         assert_eq!(parity2, parity, "{tag}: update sequence != one-shot");
@@ -106,7 +115,9 @@ fn encode_tables_and_update_match_isal_vectors() {
         let mut out = vec![vec![0u8; len]; drop];
         {
             let mut refs: Vec<&mut [u8]> = out.iter_mut().map(|b| b.as_mut_slice()).collect();
-            coder.recover(&shards, &rebuild, &mut refs).unwrap_or_else(|e| panic!("{tag}: recover: {e}"));
+            coder
+                .recover(&shards, &rebuild, &mut refs)
+                .unwrap_or_else(|e| panic!("{tag}: recover: {e}"));
         }
         for (x, got) in rebuild.iter().zip(&out) {
             assert_eq!(got.as_slice(), data[*x], "{tag}: recovered shard {x}");

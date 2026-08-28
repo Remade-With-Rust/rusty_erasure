@@ -23,14 +23,18 @@ impl Rng {
 #[test]
 fn best_arch_kernels_match_scalar() {
     let Some(simd) = rusty_erasure_accel::kernels() else {
-        eprintln!("no accel set on this arch/build (e.g. wasm without +simd128) — scalar is the path");
+        eprintln!(
+            "no accel set on this arch/build (e.g. wasm without +simd128) — scalar is the path"
+        );
         return;
     };
     eprintln!("testing {}", simd.name);
     let census_before = simd.census.load(core::sync::atomic::Ordering::Relaxed);
     let scalar = Kernels::scalar();
     let mut rng = Rng(0x9047_AB1E);
-    for &len in &[0usize, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 96, 255, 1024, 4113] {
+    for &len in &[
+        0usize, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 96, 255, 1024, 4113,
+    ] {
         for &(k, rows) in &[(1usize, 1usize), (2, 3), (4, 4), (5, 5), (10, 4), (16, 8)] {
             let coeffs = rng.bytes(rows * k);
             let data: Vec<Vec<u8>> = (0..k).map(|_| rng.bytes(len)).collect();
@@ -68,13 +72,11 @@ fn best_arch_kernels_match_scalar() {
                 let mut ua = a.clone();
                 let mut ub = a.clone();
                 {
-                    let mut ur: Vec<&mut [u8]> =
-                        ua.iter_mut().map(|x| x.as_mut_slice()).collect();
+                    let mut ur: Vec<&mut [u8]> = ua.iter_mut().map(|x| x.as_mut_slice()).collect();
                     (scalar.update)(&sg, k, 0, data_refs[0], &mut ur);
                 }
                 {
-                    let mut ur: Vec<&mut [u8]> =
-                        ub.iter_mut().map(|x| x.as_mut_slice()).collect();
+                    let mut ur: Vec<&mut [u8]> = ub.iter_mut().map(|x| x.as_mut_slice()).collect();
                     (simd.update)(&vg, k, 0, data_refs[0], &mut ur);
                 }
                 assert_eq!(ua, ub, "{} update k={k} rows={rows} len={len}", simd.name);
@@ -85,7 +87,11 @@ fn best_arch_kernels_match_scalar() {
     // bytes it just processed (an uncounted kernel is invisible to the
     // shipping census — the rusty_zstd law).
     let census_after = simd.census.load(core::sync::atomic::Ordering::Relaxed);
-    assert!(census_after > census_before, "{}: census did not advance", simd.name);
+    assert!(
+        census_after > census_before,
+        "{}: census did not advance",
+        simd.name
+    );
 }
 
 /// The dispatched RAID pair on this arch must be byte-identical to the core
@@ -97,7 +103,9 @@ fn arch_raid_kernels_match_core() {
         return;
     };
     let mut rng = Rng(0x7A1D_5EED);
-    for &len in &[0usize, 1, 7, 8, 15, 16, 31, 32, 33, 63, 64, 65, 96, 255, 1024, 4113] {
+    for &len in &[
+        0usize, 1, 7, 8, 15, 16, 31, 32, 33, 63, 64, 65, 96, 255, 1024, 4113,
+    ] {
         for &n in &[2usize, 3, 5, 8, 17] {
             let sources: Vec<Vec<u8>> = (0..n).map(|_| rng.bytes(len)).collect();
             let refs: Vec<&[u8]> = sources.iter().map(|s| s.as_slice()).collect();

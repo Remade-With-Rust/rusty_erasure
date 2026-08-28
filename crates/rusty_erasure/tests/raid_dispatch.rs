@@ -44,7 +44,11 @@ fn dispatched_raid_matches_core() {
             assert_eq!(qa, qb, "Q nsrc={nsrc} len={len}");
 
             // And the checkers accept the dispatched outputs.
-            assert_eq!(core_raid::pq_check(&refs, &pb, &qb), Ok(None), "nsrc={nsrc} len={len}");
+            assert_eq!(
+                core_raid::pq_check(&refs, &pb, &qb),
+                Ok(None),
+                "nsrc={nsrc} len={len}"
+            );
         }
     }
 }

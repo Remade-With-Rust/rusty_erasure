@@ -30,9 +30,15 @@ impl<'a> Cursor<'a> {
 }
 
 #[test]
-#[cfg_attr(miri, ignore = "byte-identity replay is deterministic and UB-free; slow interpreted")]
+#[cfg_attr(
+    miri,
+    ignore = "byte-identity replay is deterministic and UB-free; slow interpreted"
+)]
 fn raid_matches_isal_vectors() {
-    let mut c = Cursor { buf: VECTORS, pos: 0 };
+    let mut c = Cursor {
+        buf: VECTORS,
+        pos: 0,
+    };
     assert_eq!(c.take(4), b"RRV1", "vector file magic");
     let count = c.u32();
     assert!(count > 0);
@@ -68,16 +74,24 @@ fn raid_matches_isal_vectors() {
             let hit = len / 2;
             let mut bad_q = q.clone();
             bad_q[hit] ^= 0x20;
-            let m = pq_check(&sources, &p, &bad_q).unwrap().expect("must detect");
+            let m = pq_check(&sources, &p, &bad_q)
+                .unwrap()
+                .expect("must detect");
             assert_eq!((m.index, m.parity), (hit, PqParity::Q), "{tag}");
             let mut bad_p = p.clone();
             bad_p[hit] ^= 0x01;
-            let m = pq_check(&sources, &bad_p, &q).unwrap().expect("must detect");
+            let m = pq_check(&sources, &bad_p, &q)
+                .unwrap()
+                .expect("must detect");
             assert_eq!((m.index, m.parity), (hit, PqParity::P), "{tag}");
             let mut bad_all = all.clone();
             let bad_first: Vec<u8> = sources[0].iter().map(|&b| b ^ 0x80).collect();
             bad_all[0] = &bad_first;
-            assert_eq!(xor_check(&bad_all), Ok(false), "{tag}: xor_check corruption");
+            assert_eq!(
+                xor_check(&bad_all),
+                Ok(false),
+                "{tag}: xor_check corruption"
+            );
         }
     }
     assert_eq!(c.pos, VECTORS.len(), "trailing bytes in vector file");
@@ -90,12 +104,24 @@ fn raid_misuse_is_typed_errors() {
     let mut out = vec![0u8; 16];
     let mut q = vec![0u8; 16];
     assert!(xor_gen(&[&a], &mut out).is_err(), "one source refused");
-    assert!(xor_gen(&[&a, &short], &mut out).is_err(), "length mismatch refused");
-    assert!(pq_gen(&[&a], &mut out, &mut q).is_err(), "one source refused");
+    assert!(
+        xor_gen(&[&a, &short], &mut out).is_err(),
+        "length mismatch refused"
+    );
+    assert!(
+        pq_gen(&[&a], &mut out, &mut q).is_err(),
+        "one source refused"
+    );
     let mut q15 = vec![0u8; 15];
-    assert!(pq_gen(&[&a, &a], &mut out, &mut q15).is_err(), "p/q length mismatch");
+    assert!(
+        pq_gen(&[&a, &a], &mut out, &mut q15).is_err(),
+        "p/q length mismatch"
+    );
     assert!(xor_check(&[&a]).is_err(), "one vector refused");
-    assert!(pq_check(&[&a, &short], &out, &q).is_err(), "length mismatch refused");
+    assert!(
+        pq_check(&[&a, &short], &out, &q).is_err(),
+        "length mismatch refused"
+    );
     // len-0 is a valid degenerate stripe.
     let e: [u8; 0] = [];
     let mut z: Vec<u8> = vec![];

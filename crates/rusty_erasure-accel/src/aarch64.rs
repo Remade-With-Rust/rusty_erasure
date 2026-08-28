@@ -98,10 +98,8 @@ pub(crate) mod imp {
                         let start = (r * k + j) * TABLE_BYTES;
                         let tlo = vld1q_u8(gftbls.as_ptr().add(start));
                         let thi = vld1q_u8(gftbls.as_ptr().add(start + 16));
-                        acc[r] = veorq_u8(
-                            acc[r],
-                            veorq_u8(vqtbl1q_u8(tlo, lo), vqtbl1q_u8(thi, hi)),
-                        );
+                        acc[r] =
+                            veorq_u8(acc[r], veorq_u8(vqtbl1q_u8(tlo, lo), vqtbl1q_u8(thi, hi)));
                     }
                 }
                 for r in 0..R {
@@ -167,8 +165,7 @@ pub(crate) mod imp {
             assert_eq!(s.len(), parity.len(), "xor length mismatch");
         }
         assert!(sources.len() >= 2, "xor needs two sources");
-        ACCEL_CENSUS_BYTES
-            .fetch_add((sources.len() * parity.len()) as u64, Ordering::Relaxed);
+        ACCEL_CENSUS_BYTES.fetch_add((sources.len() * parity.len()) as u64, Ordering::Relaxed);
         let n = parity.len();
         let mut i = 0usize;
         // SAFETY: NEON is baseline aarch64; i + 32 <= n bounds every access.
@@ -206,9 +203,37 @@ pub(crate) mod imp {
         let n = p.len();
         let last = sources.len() - 1;
         let mut i = 0usize;
-        // SAFETY: NEON is baseline aarch64; i + 16 <= n bounds every access.
+        // SAFETY: NEON is baseline aarch64; loop bounds guard every access.
         unsafe {
             let poly = vdupq_n_u8(0x1d);
+            // Quad-chunk main loop: the ×2 recurrence is a serial chain per
+            // source per chunk; four independent chains hide the latency
+            // (the same mechanism as the x86 pq unroll).
+            while i + 64 <= n {
+                let lp = sources[last].as_ptr().add(i);
+                let mut pw = [
+                    vld1q_u8(lp),
+                    vld1q_u8(lp.add(16)),
+                    vld1q_u8(lp.add(32)),
+                    vld1q_u8(lp.add(48)),
+                ];
+                let mut qw = pw;
+                for j in (0..last).rev() {
+                    let sp = sources[j].as_ptr().add(i);
+                    for c in 0..4 {
+                        let s = vld1q_u8(sp.add(c * 16));
+                        pw[c] = veorq_u8(pw[c], s);
+                        let mask = vreinterpretq_u8_s8(vshrq_n_s8::<7>(vreinterpretq_s8_u8(qw[c])));
+                        let doubled = veorq_u8(vshlq_n_u8::<1>(qw[c]), vandq_u8(mask, poly));
+                        qw[c] = veorq_u8(s, doubled);
+                    }
+                }
+                for c in 0..4 {
+                    vst1q_u8(p.as_mut_ptr().add(i + c * 16), pw[c]);
+                    vst1q_u8(q.as_mut_ptr().add(i + c * 16), qw[c]);
+                }
+                i += 64;
+            }
             while i + 16 <= n {
                 let s_last = vld1q_u8(sources[last].as_ptr().add(i));
                 let mut pw = s_last;
@@ -239,7 +264,13 @@ pub(crate) mod imp {
     }
 
     /// Fused update: one pass over the source folds it into every row.
-    pub(crate) fn update_neon(gftbls: &[u8], k: usize, vec_i: usize, src: &[u8], outs: &mut [&mut [u8]]) {
+    pub(crate) fn update_neon(
+        gftbls: &[u8],
+        k: usize,
+        vec_i: usize,
+        src: &[u8],
+        outs: &mut [&mut [u8]],
+    ) {
         assert!(vec_i < k, "source index in range");
         assert!(
             gftbls.len() >= ((outs.len().saturating_sub(1)) * k + vec_i + 1) * TABLE_BYTES,
@@ -252,10 +283,13 @@ pub(crate) mod imp {
         let n = src.len();
         for row_base in (0..outs.len()).step_by(4) {
             let g = (outs.len() - row_base).min(4);
-            let mut stbls: [&[u8; TABLE_BYTES]; 4] = [gftbls[..TABLE_BYTES].try_into().expect("checked"); 4];
+            let mut stbls: [&[u8; TABLE_BYTES]; 4] =
+                [gftbls[..TABLE_BYTES].try_into().expect("checked"); 4];
             for (ri, st) in stbls.iter_mut().enumerate().take(g) {
                 let start = ((row_base + ri) * k + vec_i) * TABLE_BYTES;
-                *st = gftbls[start..start + TABLE_BYTES].try_into().expect("checked");
+                *st = gftbls[start..start + TABLE_BYTES]
+                    .try_into()
+                    .expect("checked");
             }
             let group = &mut outs[row_base..row_base + g];
             let mut i = 0usize;

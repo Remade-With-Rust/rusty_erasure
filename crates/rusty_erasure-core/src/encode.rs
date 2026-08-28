@@ -65,7 +65,11 @@ impl Coder {
             });
         }
         let gftbls = (kernels.init)(matrix.parity_bytes());
-        Ok(Self { matrix, gftbls, kernels })
+        Ok(Self {
+            matrix,
+            gftbls,
+            kernels,
+        })
     }
 
     /// The kernel set this coder drives (name is useful for reporting).
@@ -98,11 +102,18 @@ impl Coder {
 
     fn check_data(&self, data: &[&[u8]], len: usize) -> Result<(), CodeError> {
         if data.len() != self.k() {
-            return Err(CodeError::ShardCount { expected: self.k(), got: data.len() });
+            return Err(CodeError::ShardCount {
+                expected: self.k(),
+                got: data.len(),
+            });
         }
         for (index, d) in data.iter().enumerate() {
             if d.len() != len {
-                return Err(CodeError::ShardLength { index, expected: len, got: d.len() });
+                return Err(CodeError::ShardLength {
+                    index,
+                    expected: len,
+                    got: d.len(),
+                });
             }
         }
         Ok(())
@@ -112,7 +123,10 @@ impl Coder {
     /// (overwritten). Byte-identical to ISA-L `ec_encode_data`.
     pub fn encode(&self, data: &[&[u8]], parity: &mut [&mut [u8]]) -> Result<(), CodeError> {
         if parity.len() != self.p() {
-            return Err(CodeError::ShardCount { expected: self.p(), got: parity.len() });
+            return Err(CodeError::ShardCount {
+                expected: self.p(),
+                got: parity.len(),
+            });
         }
         let len = parity.first().map_or(0, |b| b.len());
         for (index, b) in parity.iter().enumerate() {
@@ -141,10 +155,16 @@ impl Coder {
     ) -> Result<(), CodeError> {
         let k = self.k();
         if shard_index >= k {
-            return Err(CodeError::ShardIndex { index: shard_index, k });
+            return Err(CodeError::ShardIndex {
+                index: shard_index,
+                k,
+            });
         }
         if parity.len() != self.p() {
-            return Err(CodeError::ShardCount { expected: self.p(), got: parity.len() });
+            return Err(CodeError::ShardCount {
+                expected: self.p(),
+                got: parity.len(),
+            });
         }
         for (index, b) in parity.iter().enumerate() {
             if b.len() != data.len() {
@@ -163,7 +183,10 @@ impl Coder {
     /// parity shard matches a fresh encode.
     pub fn verify(&self, data: &[&[u8]], parity: &[&[u8]]) -> Result<bool, CodeError> {
         if parity.len() != self.p() {
-            return Err(CodeError::ShardCount { expected: self.p(), got: parity.len() });
+            return Err(CodeError::ShardCount {
+                expected: self.p(),
+                got: parity.len(),
+            });
         }
         let len = parity.first().map_or(0, |b| b.len());
         for (index, b) in parity.iter().enumerate() {
@@ -212,7 +235,11 @@ impl Coder {
         let k = self.k();
         let n = self.matrix.rows();
         if present.len() != n {
-            return Err(CodeError::ShardCount { expected: n, got: present.len() }.into());
+            return Err(CodeError::ShardCount {
+                expected: n,
+                got: present.len(),
+            }
+            .into());
         }
         for &x in rebuild {
             if x >= n {
@@ -230,7 +257,10 @@ impl Coder {
             }
         }
         if survivors.len() < k {
-            return Err(RecoverError::TooManyMissing { missing: n - have, p: self.p() });
+            return Err(RecoverError::TooManyMissing {
+                missing: n - have,
+                p: self.p(),
+            });
         }
         let b = self.matrix.select_rows(&survivors)?;
         let d = b.invert()?;
@@ -271,12 +301,18 @@ impl Coder {
         out: &mut [&mut [u8]],
     ) -> Result<(), RecoverError> {
         if shards.len() != plan.n {
-            return Err(CodeError::ShardCount { expected: plan.n, got: shards.len() }.into());
+            return Err(CodeError::ShardCount {
+                expected: plan.n,
+                got: shards.len(),
+            }
+            .into());
         }
         if out.len() != plan.rebuild.len() {
-            return Err(
-                CodeError::ShardCount { expected: plan.rebuild.len(), got: out.len() }.into()
-            );
+            return Err(CodeError::ShardCount {
+                expected: plan.rebuild.len(),
+                got: out.len(),
+            }
+            .into());
         }
         let mut src: Vec<&[u8]> = Vec::with_capacity(plan.survivors.len());
         let len = out.first().map_or(0, |b| b.len());
@@ -286,15 +322,23 @@ impl Coder {
                 p: self.p(),
             })?;
             if s.len() != len {
-                return Err(CodeError::ShardLength { index: i, expected: len, got: s.len() }.into());
+                return Err(CodeError::ShardLength {
+                    index: i,
+                    expected: len,
+                    got: s.len(),
+                }
+                .into());
             }
             src.push(s);
         }
         for b in out.iter() {
             if b.len() != len {
-                return Err(
-                    CodeError::ShardLength { index: 0, expected: len, got: b.len() }.into()
-                );
+                return Err(CodeError::ShardLength {
+                    index: 0,
+                    expected: len,
+                    got: b.len(),
+                }
+                .into());
             }
         }
         (self.kernels.encode)(&plan.gftbls, &src, out);
@@ -321,10 +365,18 @@ impl Coder {
         let k = self.k();
         let n = self.matrix.rows();
         if shards.len() != n {
-            return Err(CodeError::ShardCount { expected: n, got: shards.len() }.into());
+            return Err(CodeError::ShardCount {
+                expected: n,
+                got: shards.len(),
+            }
+            .into());
         }
         if rebuild.len() != out.len() {
-            return Err(CodeError::ShardCount { expected: rebuild.len(), got: out.len() }.into());
+            return Err(CodeError::ShardCount {
+                expected: rebuild.len(),
+                got: out.len(),
+            }
+            .into());
         }
         for &x in rebuild {
             if x >= n {
@@ -344,26 +396,34 @@ impl Coder {
             }
         }
         if survivors.len() < k {
-            return Err(RecoverError::TooManyMissing { missing: n - present, p: self.p() });
+            return Err(RecoverError::TooManyMissing {
+                missing: n - present,
+                p: self.p(),
+            });
         }
 
         // Shard length agreement across every present shard and output buffer.
         let len = shards[survivors[0]].expect("survivor is present").len();
         for (index, s) in shards.iter().enumerate() {
-            if let Some(s) = s {
-                if s.len() != len {
-                    return Err(
-                        CodeError::ShardLength { index, expected: len, got: s.len() }.into()
-                    );
+            if let Some(s) = s
+                && s.len() != len
+            {
+                return Err(CodeError::ShardLength {
+                    index,
+                    expected: len,
+                    got: s.len(),
                 }
+                .into());
             }
         }
         for (i, b) in out.iter().enumerate() {
             if b.len() != len {
-                return Err(
-                    CodeError::ShardLength { index: rebuild[i], expected: len, got: b.len() }
-                        .into(),
-                );
+                return Err(CodeError::ShardLength {
+                    index: rebuild[i],
+                    expected: len,
+                    got: b.len(),
+                }
+                .into());
             }
         }
 
