@@ -24,6 +24,7 @@ pub mod error;
 pub mod gf;
 pub mod kernel;
 pub mod matrix;
+pub mod raid;
 pub mod tables;
 
 pub use encode::Coder;

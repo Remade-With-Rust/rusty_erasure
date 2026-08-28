@@ -76,7 +76,12 @@ fn bench(args: &[String]) -> Result<(), String> {
     let p = get_usize(&flags, "p", 4)?;
     let len = get_usize(&flags, "len", 65536)?;
     let reps = get_usize(&flags, "reps", 6000)?;
+    let stripes = get_usize(&flags, "stripes", 1)?;
+    let threads = get_usize(&flags, "threads", 1)?;
     let kernels_arg = flags.get("kernels").map(String::as_str).unwrap_or("auto");
+    if stripes > 1 || threads > 1 {
+        return bench_stripes(k, p, len, reps, stripes, threads.max(1), kernels_arg);
+    }
 
     let matrix = Matrix::cauchy(k, p).map_err(|e| e.to_string())?;
     let Some(kern) = kernels_named(kernels_arg) else {
@@ -132,6 +137,63 @@ fn bench(args: &[String]) -> Result<(), String> {
         cen.scalar_bytes,
         cen.accel_bytes,
         cen.accel_percent().map_or_else(|| "n/a".into(), |v| format!("{v:.2}%")),
+    );
+    Ok(())
+}
+
+/// Multi-stripe throughput (ERASCORP S10): independent stripes split across
+/// `threads` OS threads via `std::thread::scope` — one shared `&Coder` (it is
+/// `Sync`), each thread owning its stripes' buffers. No dependency needed for
+/// embarrassing parallelism; callers wanting a pool can wrap the same shape.
+fn bench_stripes(
+    k: usize,
+    p: usize,
+    len: usize,
+    reps: usize,
+    stripes: usize,
+    threads: usize,
+    kernels_arg: &str,
+) -> Result<(), String> {
+    let matrix = Matrix::cauchy(k, p).map_err(|e| e.to_string())?;
+    let Some(kern) = kernels_named(kernels_arg) else {
+        return Err(format!("--kernels: '{kernels_arg}' unknown or unsupported"));
+    };
+    let c = Coder::with_kernels(matrix, kern).map_err(|e| e.to_string())?;
+
+    let mut all: Vec<(Vec<Vec<u8>>, Vec<Vec<u8>>)> = (0..stripes)
+        .map(|_| (build_stripe(k, len), vec![vec![0u8; len]; p]))
+        .collect();
+
+    let t0 = Instant::now();
+    std::thread::scope(|s| {
+        let per = stripes.div_ceil(threads);
+        for chunk in all.chunks_mut(per) {
+            let c = &c;
+            s.spawn(move || {
+                for (data, parity) in chunk.iter_mut() {
+                    let refs: Vec<&[u8]> = data.iter().map(|d| d.as_slice()).collect();
+                    let mut prefs: Vec<&mut [u8]> =
+                        parity.iter_mut().map(|b| b.as_mut_slice()).collect();
+                    for _ in 0..reps {
+                        c.encode(&refs, black_box(&mut prefs)).expect("validated");
+                    }
+                }
+            });
+        }
+    });
+    let wall = t0.elapsed().as_secs_f64();
+    let src_bytes = (k * len) as f64 * reps as f64 * stripes as f64;
+    let checksum = all
+        .iter()
+        .flat_map(|(_, par)| par.iter().flatten())
+        .fold(0u8, |a, &b| a ^ b);
+    println!(
+        "stripes cell k={k} p={p} len={len} reps={reps} stripes={stripes} threads={threads} kernels={}",
+        c.kernels().name
+    );
+    println!(
+        "aggregate: wall_s={wall:.2} src_GBps={:.3} checksum={checksum:#04x} (wall basis — aggregate multi-thread throughput)",
+        src_bytes / wall / 1e9
     );
     Ok(())
 }
