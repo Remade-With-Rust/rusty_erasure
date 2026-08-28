@@ -55,7 +55,40 @@ pub(crate) mod imp {
         // (i + 16 <= len == each slice's len; table offsets < gftbls.len()).
         unsafe {
             let mask = vdupq_n_u8(0x0f);
-            while i + 16 <= len {
+            // Double-chunk main loop: each (row, source) table load serves
+            // BOTH 16-byte chunks — the GFNI double-chunk brick deployed to
+            // the NEON nibble set (32 vector regs hold it easily).
+            while i + 32 <= len {
+                let mut acc0 = [vdupq_n_u8(0); R];
+                let mut acc1 = [vdupq_n_u8(0); R];
+                for (j, src) in data.iter().enumerate() {
+                    let s0 = vld1q_u8(src.as_ptr().add(i));
+                    let s1 = vld1q_u8(src.as_ptr().add(i + 16));
+                    let lo0 = vandq_u8(s0, mask);
+                    let hi0 = vandq_u8(vshrq_n_u8::<4>(s0), mask);
+                    let lo1 = vandq_u8(s1, mask);
+                    let hi1 = vandq_u8(vshrq_n_u8::<4>(s1), mask);
+                    for r in 0..R {
+                        let start = (r * k + j) * TABLE_BYTES;
+                        let tlo = vld1q_u8(gftbls.as_ptr().add(start));
+                        let thi = vld1q_u8(gftbls.as_ptr().add(start + 16));
+                        acc0[r] = veorq_u8(
+                            acc0[r],
+                            veorq_u8(vqtbl1q_u8(tlo, lo0), vqtbl1q_u8(thi, hi0)),
+                        );
+                        acc1[r] = veorq_u8(
+                            acc1[r],
+                            veorq_u8(vqtbl1q_u8(tlo, lo1), vqtbl1q_u8(thi, hi1)),
+                        );
+                    }
+                }
+                for r in 0..R {
+                    vst1q_u8(out[r].as_mut_ptr().add(i), acc0[r]);
+                    vst1q_u8(out[r].as_mut_ptr().add(i + 16), acc1[r]);
+                }
+                i += 32;
+            }
+            if i + 16 <= len {
                 let mut acc = [vdupq_n_u8(0); R];
                 for (j, src) in data.iter().enumerate() {
                     let s = vld1q_u8(src.as_ptr().add(i));
@@ -128,6 +161,83 @@ pub(crate) mod imp {
         }
     }
 
+    /// NEON RAID xor: single-pass fold, two 16-byte streams per chunk.
+    pub(crate) fn raid_xor_neon(sources: &[&[u8]], parity: &mut [u8]) {
+        for s in sources {
+            assert_eq!(s.len(), parity.len(), "xor length mismatch");
+        }
+        assert!(sources.len() >= 2, "xor needs two sources");
+        ACCEL_CENSUS_BYTES
+            .fetch_add((sources.len() * parity.len()) as u64, Ordering::Relaxed);
+        let n = parity.len();
+        let mut i = 0usize;
+        // SAFETY: NEON is baseline aarch64; i + 32 <= n bounds every access.
+        unsafe {
+            while i + 32 <= n {
+                let mut a0 = vld1q_u8(sources[0].as_ptr().add(i));
+                let mut a1 = vld1q_u8(sources[0].as_ptr().add(i + 16));
+                for s in &sources[1..] {
+                    a0 = veorq_u8(a0, vld1q_u8(s.as_ptr().add(i)));
+                    a1 = veorq_u8(a1, vld1q_u8(s.as_ptr().add(i + 16)));
+                }
+                vst1q_u8(parity.as_mut_ptr().add(i), a0);
+                vst1q_u8(parity.as_mut_ptr().add(i + 16), a1);
+                i += 32;
+            }
+        }
+        for x in i..n {
+            let mut acc = 0u8;
+            for s in sources {
+                acc ^= s[x];
+            }
+            parity[x] = acc;
+        }
+    }
+
+    /// NEON RAID P+Q: the ×2 recurrence per byte lane — `q<<1` via
+    /// `vshlq_n_u8`, the 0x1d fold mask from an arithmetic sign shift.
+    pub(crate) fn raid_pq_neon(sources: &[&[u8]], p: &mut [u8], q: &mut [u8]) {
+        assert_eq!(p.len(), q.len(), "p/q length mismatch");
+        for s in sources {
+            assert_eq!(s.len(), p.len(), "pq length mismatch");
+        }
+        assert!(sources.len() >= 2, "pq needs two sources");
+        ACCEL_CENSUS_BYTES.fetch_add((sources.len() * p.len()) as u64, Ordering::Relaxed);
+        let n = p.len();
+        let last = sources.len() - 1;
+        let mut i = 0usize;
+        // SAFETY: NEON is baseline aarch64; i + 16 <= n bounds every access.
+        unsafe {
+            let poly = vdupq_n_u8(0x1d);
+            while i + 16 <= n {
+                let s_last = vld1q_u8(sources[last].as_ptr().add(i));
+                let mut pw = s_last;
+                let mut qw = s_last;
+                for j in (0..last).rev() {
+                    let s = vld1q_u8(sources[j].as_ptr().add(i));
+                    pw = veorq_u8(pw, s);
+                    let mask = vreinterpretq_u8_s8(vshrq_n_s8::<7>(vreinterpretq_s8_u8(qw)));
+                    let doubled = veorq_u8(vshlq_n_u8::<1>(qw), vandq_u8(mask, poly));
+                    qw = veorq_u8(s, doubled);
+                }
+                vst1q_u8(p.as_mut_ptr().add(i), pw);
+                vst1q_u8(q.as_mut_ptr().add(i), qw);
+                i += 16;
+            }
+        }
+        for x in i..n {
+            let mut pb = sources[last][x];
+            let mut qb = pb;
+            for j in (0..last).rev() {
+                let s = sources[j][x];
+                pb ^= s;
+                qb = s ^ ((qb << 1) ^ (if qb & 0x80 != 0 { 0x1d } else { 0 }));
+            }
+            p[x] = pb;
+            q[x] = qb;
+        }
+    }
+
     /// Fused update: one pass over the source folds it into every row.
     pub(crate) fn update_neon(gftbls: &[u8], k: usize, vec_i: usize, src: &[u8], outs: &mut [&mut [u8]]) {
         assert!(vec_i < k, "source index in range");
@@ -185,6 +295,16 @@ pub(crate) mod imp {
         // SAFETY: NEON is baseline on aarch64; lengths asserted.
         unsafe { mad_neon_inner(tbl, src, dest) }
     }
+}
+
+/// The NEON RAID kernels (aarch64 only; NEON is baseline — always `Some`).
+pub fn raid_kernels() -> Option<crate::RaidKernels> {
+    #[cfg(target_arch = "aarch64")]
+    {
+        Some((imp::raid_xor_neon, imp::raid_pq_neon))
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    None
 }
 
 /// The NEON kernel set (aarch64 targets only; `None` elsewhere).

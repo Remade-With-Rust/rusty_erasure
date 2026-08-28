@@ -32,7 +32,7 @@ pub mod raid {
     /// XOR parity of ≥2 sources into `parity` — dispatched `xor_gen`.
     pub fn xor_gen(sources: &[&[u8]], parity: &mut [u8]) -> Result<(), CodeError> {
         #[cfg(feature = "accel")]
-        if let Some((xor, _)) = rusty_erasure_accel::x86::raid_kernels() {
+        if let Some((xor, _)) = rusty_erasure_accel::raid_kernels() {
             // Validate with the core rules, then run the kernel.
             if sources.len() >= 2 && sources.iter().all(|s| s.len() == parity.len()) {
                 xor(sources, parity);
@@ -45,7 +45,7 @@ pub mod raid {
     /// RAID-6 P+Q of ≥2 sources — dispatched `pq_gen`.
     pub fn pq_gen(sources: &[&[u8]], p: &mut [u8], q: &mut [u8]) -> Result<(), CodeError> {
         #[cfg(feature = "accel")]
-        if let Some((_, pq)) = rusty_erasure_accel::x86::raid_kernels() {
+        if let Some((_, pq)) = rusty_erasure_accel::raid_kernels() {
             if sources.len() >= 2
                 && p.len() == q.len()
                 && sources.iter().all(|s| s.len() == p.len())

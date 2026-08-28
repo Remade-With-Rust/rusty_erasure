@@ -287,6 +287,13 @@ pub fn gf_vect_mad(
         });
     }
     let tbl = tbl_at(gftbls, vec_i)?;
+    // Exact-length buffers take the dispatched mad kernel (nibble tables by
+    // this API's contract, so the nibble set — never GFNI's affine format).
+    if src.len() == len && dest.len() == len {
+        (nibble_kernels().mad)(tbl, src, dest);
+        return Ok(());
+    }
+    SCALAR_CENSUS_BYTES.fetch_add(len as u64, Ordering::Relaxed);
     for (d, &s) in dest[..len].iter_mut().zip(&src[..len]) {
         *d ^= table_mul(tbl, s);
     }
@@ -309,6 +316,13 @@ pub fn gf_vect_mul(len: usize, gftbl: &[u8], src: &[u8], dest: &mut [u8]) -> Res
         });
     }
     let tbl = tbl_at(gftbl, 0)?;
+    // Exact-length buffers take the dispatched encode kernel: one row, one
+    // source is exactly overwrite-with-product.
+    if src.len() == len && dest.len() == len {
+        (nibble_kernels().encode)(&gftbl[..TABLE_BYTES], &[src], &mut [dest]);
+        return Ok(());
+    }
+    SCALAR_CENSUS_BYTES.fetch_add(len as u64, Ordering::Relaxed);
     for (d, &s) in dest[..len].iter_mut().zip(&src[..len]) {
         *d = table_mul(tbl, s);
     }

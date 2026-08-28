@@ -52,6 +52,10 @@ fn check_lens(sources: &[&[u8]], len: usize, min_sources: usize) -> Result<(), C
 /// redundant-but-cheaper-than-the-fix case.
 pub fn xor_gen(sources: &[&[u8]], parity: &mut [u8]) -> Result<(), CodeError> {
     check_lens(sources, parity.len(), 2)?;
+    crate::kernel::SCALAR_CENSUS_BYTES.fetch_add(
+        (sources.len() * parity.len()) as u64,
+        core::sync::atomic::Ordering::Relaxed,
+    );
     let (first, rest) = sources.split_first().expect("count checked");
     parity.copy_from_slice(first);
     for src in rest {
@@ -97,6 +101,10 @@ pub fn pq_gen(sources: &[&[u8]], p: &mut [u8], q: &mut [u8]) -> Result<(), CodeE
         return Err(CodeError::ShardLength { index: 1, expected: len, got: q.len() });
     }
     check_lens(sources, len, 2)?;
+    crate::kernel::SCALAR_CENSUS_BYTES.fetch_add(
+        (sources.len() * len) as u64,
+        core::sync::atomic::Ordering::Relaxed,
+    );
 
     // 32-byte blocks: four independent u64 lanes per step (brick) — the ×2
     // recurrence chains run in parallel across lanes and the shift/mask/poly

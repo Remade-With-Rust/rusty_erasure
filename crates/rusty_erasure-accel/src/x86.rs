@@ -136,17 +136,17 @@ use crate::tail::encode_tail_nibble as encode_tail;
 /// The AVX2 RAID kernels (xor / P+Q fold), or `None` off-x86 / without AVX2.
 /// Byte-identical to `rusty_erasure_core::raid` (oracle-tested); the facade's
 /// `raid` module dispatches through this.
-pub fn raid_kernels() -> Option<(fn(&[&[u8]], &mut [u8]), fn(&[&[u8]], &mut [u8], &mut [u8]))> {
+pub fn raid_kernels() -> Option<crate::RaidKernels> {
     #[cfg(target_arch = "x86_64")]
     {
-        static CHOICE: std::sync::OnceLock<
-            Option<(fn(&[&[u8]], &mut [u8]), fn(&[&[u8]], &mut [u8], &mut [u8]))>,
-        > = std::sync::OnceLock::new();
+        static CHOICE: std::sync::OnceLock<Option<crate::RaidKernels>> =
+            std::sync::OnceLock::new();
         *CHOICE.get_or_init(|| {
             if std::arch::is_x86_feature_detected!("avx2") {
                 Some((imp::raid_xor_avx2, imp::raid_pq_avx2))
             } else {
-                None
+                // SSE2 is the x86-64 baseline: always available, no detection.
+                Some((imp::raid_xor_sse2, imp::raid_pq_sse2))
             }
         })
     }
@@ -178,7 +178,64 @@ pub(crate) mod imp {
         let len = out[0].len();
         let mask = _mm256_set1_epi8(0x0f);
         let mut i = 0usize;
-        while i + 32 <= len {
+        // Double-chunk main loop: each (row, source) table load serves BOTH
+        // 32-byte chunks — table traffic per byte halved (the deploy of the
+        // GFNI double-chunk brick to the nibble sets).
+        while i + 64 <= len {
+            let mut acc0 = [_mm256_setzero_si256(); R];
+            let mut acc1 = [_mm256_setzero_si256(); R];
+            for (j, src) in data.iter().enumerate() {
+                // SAFETY: i + 64 <= len == src.len() (asserted by the wrapper).
+                let (s0, s1) = unsafe {
+                    (
+                        _mm256_loadu_si256(src.as_ptr().add(i) as *const __m256i),
+                        _mm256_loadu_si256(src.as_ptr().add(i + 32) as *const __m256i),
+                    )
+                };
+                let lo0 = _mm256_and_si256(s0, mask);
+                let hi0 = _mm256_and_si256(_mm256_srli_epi64::<4>(s0), mask);
+                let lo1 = _mm256_and_si256(s1, mask);
+                let hi1 = _mm256_and_si256(_mm256_srli_epi64::<4>(s1), mask);
+                for r in 0..R {
+                    // SAFETY: (r*k + j + 1) * 32 <= gftbls.len() (asserted).
+                    let t = unsafe { gftbls.as_ptr().add((r * k + j) * TABLE_BYTES) };
+                    let (tlo, thi) = unsafe {
+                        (
+                            _mm256_broadcastsi128_si256(_mm_loadu_si128(t as *const __m128i)),
+                            _mm256_broadcastsi128_si256(_mm_loadu_si128(
+                                t.add(16) as *const __m128i
+                            )),
+                        )
+                    };
+                    acc0[r] = _mm256_xor_si256(
+                        acc0[r],
+                        _mm256_xor_si256(
+                            _mm256_shuffle_epi8(tlo, lo0),
+                            _mm256_shuffle_epi8(thi, hi0),
+                        ),
+                    );
+                    acc1[r] = _mm256_xor_si256(
+                        acc1[r],
+                        _mm256_xor_si256(
+                            _mm256_shuffle_epi8(tlo, lo1),
+                            _mm256_shuffle_epi8(thi, hi1),
+                        ),
+                    );
+                }
+            }
+            for r in 0..R {
+                // SAFETY: i + 64 <= len == out[r].len() (asserted).
+                unsafe {
+                    _mm256_storeu_si256(out[r].as_mut_ptr().add(i) as *mut __m256i, acc0[r]);
+                    _mm256_storeu_si256(
+                        out[r].as_mut_ptr().add(i + 32) as *mut __m256i,
+                        acc1[r],
+                    );
+                }
+            }
+            i += 64;
+        }
+        if i + 32 <= len {
             let mut acc = [_mm256_setzero_si256(); R];
             for (j, src) in data.iter().enumerate() {
                 // SAFETY: i + 32 <= len == src.len() (asserted by the wrapper).
@@ -305,7 +362,55 @@ pub(crate) mod imp {
         let len = out[0].len();
         let mask = _mm_set1_epi8(0x0f);
         let mut i = 0usize;
-        while i + 16 <= len {
+        // Double-chunk main loop: each (row, source) table load serves BOTH
+        // 16-byte chunks (the GFNI double-chunk brick; 15 xmm live, fits).
+        while i + 32 <= len {
+            let mut acc0 = [_mm_setzero_si128(); R];
+            let mut acc1 = [_mm_setzero_si128(); R];
+            for (j, src) in data.iter().enumerate() {
+                // SAFETY: i + 32 <= len == src.len() (asserted by the wrapper).
+                let (s0, s1) = unsafe {
+                    (
+                        _mm_loadu_si128(src.as_ptr().add(i) as *const __m128i),
+                        _mm_loadu_si128(src.as_ptr().add(i + 16) as *const __m128i),
+                    )
+                };
+                let lo0 = _mm_and_si128(s0, mask);
+                let hi0 = _mm_and_si128(_mm_srli_epi64::<4>(s0), mask);
+                let lo1 = _mm_and_si128(s1, mask);
+                let hi1 = _mm_and_si128(_mm_srli_epi64::<4>(s1), mask);
+                for r in 0..R {
+                    // SAFETY: (r*k + j + 1) * 32 <= gftbls.len() (asserted).
+                    let t = unsafe { gftbls.as_ptr().add((r * k + j) * TABLE_BYTES) };
+                    let (tlo, thi) = unsafe {
+                        (
+                            _mm_loadu_si128(t as *const __m128i),
+                            _mm_loadu_si128(t.add(16) as *const __m128i),
+                        )
+                    };
+                    acc0[r] = _mm_xor_si128(
+                        acc0[r],
+                        _mm_xor_si128(_mm_shuffle_epi8(tlo, lo0), _mm_shuffle_epi8(thi, hi0)),
+                    );
+                    acc1[r] = _mm_xor_si128(
+                        acc1[r],
+                        _mm_xor_si128(_mm_shuffle_epi8(tlo, lo1), _mm_shuffle_epi8(thi, hi1)),
+                    );
+                }
+            }
+            for r in 0..R {
+                // SAFETY: i + 32 <= len == out[r].len() (asserted).
+                unsafe {
+                    _mm_storeu_si128(out[r].as_mut_ptr().add(i) as *mut __m128i, acc0[r]);
+                    _mm_storeu_si128(
+                        out[r].as_mut_ptr().add(i + 16) as *mut __m128i,
+                        acc1[r],
+                    );
+                }
+            }
+            i += 32;
+        }
+        if i + 16 <= len {
             let mut acc = [_mm_setzero_si128(); R];
             for (j, src) in data.iter().enumerate() {
                 // SAFETY: i + 16 <= len == src.len() (asserted by the wrapper).
@@ -766,6 +871,89 @@ pub(crate) mod imp {
         ACCEL_CENSUS_BYTES.fetch_add((sources.len() * p.len()) as u64, Ordering::Relaxed);
         // SAFETY: handed out only after avx2 detection; lengths asserted.
         unsafe { raid_pq_avx2_inner(sources, p, q) }
+    }
+
+    /// SSE2 (baseline) RAID fallback: same single-pass fold shapes at 16-byte
+    /// width, two streams per 32-byte chunk. No detection — SSE2 is x86-64
+    /// baseline, so these are safe plain functions.
+    pub(crate) fn raid_xor_sse2(sources: &[&[u8]], parity: &mut [u8]) {
+        for s in sources {
+            assert_eq!(s.len(), parity.len(), "xor length mismatch");
+        }
+        assert!(sources.len() >= 2, "xor needs two sources");
+        ACCEL_CENSUS_BYTES
+            .fetch_add((sources.len() * parity.len()) as u64, Ordering::Relaxed);
+        let n = parity.len();
+        let mut i = 0usize;
+        // SAFETY: SSE2 is baseline on x86-64; i + 32 <= n bounds every access.
+        unsafe {
+            while i + 32 <= n {
+                let mut a0 = _mm_loadu_si128(sources[0].as_ptr().add(i) as *const __m128i);
+                let mut a1 = _mm_loadu_si128(sources[0].as_ptr().add(i + 16) as *const __m128i);
+                for s in &sources[1..] {
+                    a0 = _mm_xor_si128(a0, _mm_loadu_si128(s.as_ptr().add(i) as *const __m128i));
+                    a1 = _mm_xor_si128(
+                        a1,
+                        _mm_loadu_si128(s.as_ptr().add(i + 16) as *const __m128i),
+                    );
+                }
+                _mm_storeu_si128(parity.as_mut_ptr().add(i) as *mut __m128i, a0);
+                _mm_storeu_si128(parity.as_mut_ptr().add(i + 16) as *mut __m128i, a1);
+                i += 32;
+            }
+        }
+        for x in i..n {
+            let mut acc = 0u8;
+            for s in sources {
+                acc ^= s[x];
+            }
+            parity[x] = acc;
+        }
+    }
+
+    pub(crate) fn raid_pq_sse2(sources: &[&[u8]], p: &mut [u8], q: &mut [u8]) {
+        assert_eq!(p.len(), q.len(), "p/q length mismatch");
+        for s in sources {
+            assert_eq!(s.len(), p.len(), "pq length mismatch");
+        }
+        assert!(sources.len() >= 2, "pq needs two sources");
+        ACCEL_CENSUS_BYTES.fetch_add((sources.len() * p.len()) as u64, Ordering::Relaxed);
+        let n = p.len();
+        let last = sources.len() - 1;
+        let mut i = 0usize;
+        // SAFETY: SSE2 is baseline on x86-64; i + 16 <= n bounds every access.
+        unsafe {
+            let poly = _mm_set1_epi8(0x1d);
+            let zero = _mm_setzero_si128();
+            while i + 16 <= n {
+                let s_last = _mm_loadu_si128(sources[last].as_ptr().add(i) as *const __m128i);
+                let mut pw = s_last;
+                let mut qw = s_last;
+                for j in (0..last).rev() {
+                    let s = _mm_loadu_si128(sources[j].as_ptr().add(i) as *const __m128i);
+                    pw = _mm_xor_si128(pw, s);
+                    let doubled = _mm_xor_si128(
+                        _mm_add_epi8(qw, qw),
+                        _mm_and_si128(_mm_cmpgt_epi8(zero, qw), poly),
+                    );
+                    qw = _mm_xor_si128(s, doubled);
+                }
+                _mm_storeu_si128(p.as_mut_ptr().add(i) as *mut __m128i, pw);
+                _mm_storeu_si128(q.as_mut_ptr().add(i) as *mut __m128i, qw);
+                i += 16;
+            }
+        }
+        for x in i..n {
+            let mut pb = sources[last][x];
+            let mut qb = pb;
+            for j in (0..last).rev() {
+                let s = sources[j][x];
+                pb ^= s;
+                qb = s ^ ((qb << 1) ^ (if qb & 0x80 != 0 { 0x1d } else { 0 }));
+            }
+            p[x] = pb;
+            q[x] = qb;
+        }
     }
 
     /// Shared validation for fused update wrappers.
