@@ -50,10 +50,15 @@ jobs:
           key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
           restore-keys: fuzz-corpus-${{ matrix.target }}-
 
+      # --target is explicit on purpose: install-action ships a MUSL-built
+      # cargo-fuzz, so its default target is musl, and ASan cannot link
+      # against a static libc ("sanitizer is incompatible with statically
+      # linked libc"). The sanitizer is this job's entire point, so the gnu
+      # triple is named rather than inherited.
       - name: fuzz ${{ matrix.target }}
         run: |
           mins="${{ github.event.inputs.minutes || '20' }}"
-          cargo +nightly fuzz run ${{ matrix.target }} -- \
+          cargo +nightly fuzz run --target x86_64-unknown-linux-gnu ${{ matrix.target }} -- \
             -max_total_time=$((mins * 60)) -print_final_stats=1
 
       - name: upload reproducers
@@ -95,7 +100,7 @@ jobs:
       - name: ASan fuzz ${{ matrix.target }} on aarch64
         run: |
           mins="${{ github.event.inputs.minutes || '20' }}"
-          cargo +nightly fuzz run ${{ matrix.target }} -- \
+          cargo +nightly fuzz run --target aarch64-unknown-linux-gnu ${{ matrix.target }} -- \
             -max_total_time=$((mins * 60)) -print_final_stats=1
       - name: upload reproducers
         if: failure()
