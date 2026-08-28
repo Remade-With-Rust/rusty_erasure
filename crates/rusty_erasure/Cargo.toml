@@ -23,3 +23,9 @@ accel = ["dep:rusty_erasure-accel"]
 [dependencies]
 rusty_erasure-core.workspace = true
 rusty_erasure-accel = { workspace = true, optional = true }
+
+[dev-dependencies]
+# TEST-ONLY oracle for the `compat::reed_solomon_erasure_matrix` conformance
+# gate — never a shipped dependency (mission plan M7b: the consumer swap must
+# be byte-compatible with the crate spacedb-durability is migrating off).
+reed-solomon-erasure = "6"

@@ -89,9 +89,11 @@ impl Matrix {
     }
 
     /// Build a matrix from raw row-major bytes. `data.len()` must equal
-    /// `rows * cols`, and both dimensions must be in `1..=255`.
+    /// `rows * cols`, and both dimensions must be in `1..=256` (the GF(2^8)
+    /// shard-index limit; the field-based constructors are stricter because
+    /// their constructions need ≤ 255 distinct nonzero elements).
     pub fn from_bytes(rows: usize, cols: usize, data: Vec<u8>) -> Result<Self, MatrixError> {
-        if rows == 0 || cols == 0 || rows > 255 || cols > 255 || data.len() != rows * cols {
+        if rows == 0 || cols == 0 || rows > 256 || cols > 256 || data.len() != rows * cols {
             return Err(MatrixError::Dimensions { k: cols, p: rows.saturating_sub(cols) });
         }
         Ok(Self { rows, cols, data })
@@ -132,7 +134,7 @@ impl Matrix {
     /// must be in range; duplicates are allowed here and will simply produce
     /// a singular matrix at inversion.
     pub fn select_rows(&self, indices: &[usize]) -> Result<Self, MatrixError> {
-        if indices.is_empty() || indices.len() > 255 {
+        if indices.is_empty() || indices.len() > 256 {
             return Err(MatrixError::Dimensions { k: self.cols, p: 0 });
         }
         let mut data = Vec::with_capacity(indices.len() * self.cols);

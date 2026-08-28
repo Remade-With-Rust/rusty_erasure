@@ -14,6 +14,8 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+extern crate alloc;
+
 pub mod isal;
 
 pub use rusty_erasure_core::{
@@ -57,6 +59,40 @@ pub fn kernels_named(name: &str) -> Option<kernel::Kernels> {
         #[cfg(feature = "accel")]
         "simd128" => rusty_erasure_accel::wasm::kernels(),
         _ => None,
+    }
+}
+
+/// Compatibility constructions for migrating from other erasure engines —
+/// the payoff of a matrix-flexible API: adopt the incumbent's exact matrix
+/// and its shards stay valid in both directions, no format break.
+pub mod compat {
+    use rusty_erasure_core::error::MatrixError;
+    use rusty_erasure_core::{Matrix, gf};
+
+    /// The systematic encode matrix the `reed-solomon-erasure` crate
+    /// (`galois_8`, klauspost construction) uses: `V(n, k) · V_top⁻¹` where
+    /// `V[r][c] = r^c` over GF(2^8)/0x11d — the same field as ISA-L and this
+    /// crate. A [`crate::Coder`] built on this matrix is **byte-compatible**
+    /// with that crate's encode and reconstruct (proven by the
+    /// `klauspost_compat` conformance tests against the real crate).
+    ///
+    /// `k + p` may be up to 256 (that crate's limit).
+    pub fn reed_solomon_erasure_matrix(k: usize, p: usize) -> Result<Matrix, MatrixError> {
+        let n = k + p;
+        if k == 0 || p == 0 || n > 256 {
+            return Err(MatrixError::Dimensions { k, p });
+        }
+        let mut v = alloc::vec![0u8; n * k];
+        for r in 0..n {
+            let mut acc: u8 = 1; // r^0 == 1, including r == 0
+            for c in 0..k {
+                v[r * k + c] = acc;
+                acc = gf::mul(acc, r as u8);
+            }
+        }
+        let vand = Matrix::from_bytes(n, k, v)?;
+        let top = vand.select_rows(&(0..k).collect::<alloc::vec::Vec<_>>())?;
+        vand.multiply(&top.invert()?)
     }
 }
 
