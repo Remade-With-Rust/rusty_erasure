@@ -26,11 +26,21 @@ parameters ISA-L leaves undefined. No C, no NASM, no GPL anywhere in the build.
 - **Misuse is a typed error, never undefined behaviour.** ISA-L documents that
   callers are responsible; here every entry point validates and returns a
   `Result`.
+- **Complete across the matrix**: encode, incremental update, first-class
+  recovery and RAID-6 P+Q, each accelerated on x86-64 (SSSE3 / AVX2 /
+  AVX2-GFNI), aarch64 NEON and wasm SIMD128 — the same code path proven
+  byte-identical on all three.
+- **Evidence, not adjectives**: ten Kani proofs over the arithmetic the
+  `unsafe` rests on, ASan fuzzing on x86 *and* aarch64, Miri that demonstrably
+  reaches the SIMD kernels, and a full-grid conformance job that regenerates
+  its vectors from upstream ISA-L on every run.
 
-> **Status: `0.1.0` — published and conformant.** The public API is settled and
-> encoded output is frozen: shards written by any build stay readable. Every
-> claim in this README has an entry in [`corpus/LEDGER.md`](corpus/LEDGER.md)
-> with the run that produced it.
+> **Status: `0.4.0` — published, complete and conformant.** Every kernel is
+> deployed on every architecture it can run on, RAID-6 included. The public API
+> is settled and **encoded output is frozen**: shards written by any build stay
+> readable, and stay byte-identical to ISA-L. Every claim in this README has an
+> entry in [`corpus/LEDGER.md`](corpus/LEDGER.md) with the run that produced
+> it — see [CHANGELOG.md](CHANGELOG.md) for what 0.4.0 added.
 
 ## Performance (interleaved, pinned, CPU-time)
 
@@ -146,7 +156,7 @@ actually reached the SIMD path.
 
 ```toml
 [dependencies]
-rusty_erasure = "0.1"
+rusty_erasure = "0.4"
 ```
 
 | crate | docs | what |
