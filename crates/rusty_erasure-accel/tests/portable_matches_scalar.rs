@@ -28,6 +28,30 @@ const RAID_LENS: &[usize] = if cfg!(miri) {
     ]
 };
 
+/// Refuse to pass vacuously where a SIMD set is expected.
+///
+/// These tests skip when `kernels()` returns `None`, which is correct on a
+/// wasm build without `+simd128` — and is exactly how the Miri gate stayed
+/// green for weeks without ever executing a kernel: under Miri
+/// `is_x86_feature_detected!` returns false, so the skip fired silently.
+///
+/// A caller that KNOWS acceleration should be available sets
+/// `RUSTY_ERASURE_REQUIRE_ACCEL=1` and the skip becomes a failure. Reading the
+/// log for a reach line would not be enough: the scalar-fallback run of this
+/// same test takes 97 s under Miri and the real one 104 s, so neither the
+/// duration nor a passing result distinguishes them. The check has to be
+/// mechanical.
+fn require_accel_or_skip(set: Option<rusty_erasure_core::kernel::Kernels>) -> Option<Kernels> {
+    if set.is_none() && std::env::var_os("RUSTY_ERASURE_REQUIRE_ACCEL").is_some() {
+        panic!(
+            "RUSTY_ERASURE_REQUIRE_ACCEL is set but accel::kernels() returned None — \
+             this gate would have passed WITHOUT executing any SIMD kernel. Check the \
+             target features the build was given."
+        );
+    }
+    set
+}
+
 struct Rng(u64);
 
 impl Rng {
@@ -45,7 +69,7 @@ impl Rng {
 
 #[test]
 fn best_arch_kernels_match_scalar() {
-    let Some(simd) = rusty_erasure_accel::kernels() else {
+    let Some(simd) = require_accel_or_skip(rusty_erasure_accel::kernels()) else {
         eprintln!(
             "no accel set on this arch/build (e.g. wasm without +simd128) — scalar is the path"
         );
@@ -119,7 +143,14 @@ fn best_arch_kernels_match_scalar() {
 /// scalar raid module — the same oracle law, applied to xor_gen/pq_gen.
 #[test]
 fn arch_raid_kernels_match_core() {
-    let Some((xor, pq)) = rusty_erasure_accel::raid_kernels() else {
+    let raid = rusty_erasure_accel::raid_kernels();
+    if raid.is_none() && std::env::var_os("RUSTY_ERASURE_REQUIRE_ACCEL").is_some() {
+        panic!(
+            "RUSTY_ERASURE_REQUIRE_ACCEL is set but accel::raid_kernels() returned None — \
+             this gate would have passed WITHOUT executing any RAID kernel."
+        );
+    }
+    let Some((xor, pq)) = raid else {
         eprintln!("no accel RAID pair on this arch/build — the core path is the path");
         return;
     };

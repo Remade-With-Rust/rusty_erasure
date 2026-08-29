@@ -61,7 +61,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       RUSTFLAGS: -C target-feature=+simd128
-      CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime
+      # Built with +simd128, so a "no accel" skip here means the build is not
+      # what we think it is — fail rather than pass quietly.
+      RUSTY_ERASURE_REQUIRE_ACCEL: "1"
+      CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime --dir=. --env RUSTY_ERASURE_REQUIRE_ACCEL=1
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - run: rustup target add wasm32-wasip1
@@ -117,6 +120,11 @@ jobs:
       - name: miri over the SIMD kernels
         env:
           RUSTFLAGS: -C target-feature=+ssse3,+avx2
+          # Turns the "no accel — skipping" path into a hard failure. Without
+          # it this step can pass having executed nothing, which is precisely
+          # how the gate stayed green before, and neither the duration (97s
+          # scalar vs 104s real) nor the result would give it away.
+          RUSTY_ERASURE_REQUIRE_ACCEL: "1"
         run: cargo +nightly miri test -p rusty_erasure-accel --test portable_matches_scalar
 
   # Repo-specific pattern rules beyond clippy (H-22): unsafe outside the one
