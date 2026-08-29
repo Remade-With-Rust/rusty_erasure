@@ -5,6 +5,29 @@
 
 use rusty_erasure_core::kernel::Kernels;
 
+/// Lengths that straddle every vector width, unroll tier and tail.
+///
+/// Miri is ~100x slower than native, and this gate is the one that actually
+/// executes the SIMD kernels under it, so the long lengths are dropped there.
+/// Nothing is lost: 0..=96 already crosses every 16/32/64/128-byte boundary
+/// the kernels tier on, and the big values only repeat those crossings with
+/// more iterations. Same pattern the ported ISA-L suite already uses.
+const ENCODE_LENS: &[usize] = if cfg!(miri) {
+    &[0, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 96]
+} else {
+    &[
+        0, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 96, 255, 1024, 4113,
+    ]
+};
+
+const RAID_LENS: &[usize] = if cfg!(miri) {
+    &[0, 1, 7, 8, 15, 16, 31, 32, 33, 63, 64, 65, 96]
+} else {
+    &[
+        0, 1, 7, 8, 15, 16, 31, 32, 33, 63, 64, 65, 96, 255, 1024, 4113,
+    ]
+};
+
 struct Rng(u64);
 
 impl Rng {
@@ -32,9 +55,7 @@ fn best_arch_kernels_match_scalar() {
     let census_before = simd.census.load(core::sync::atomic::Ordering::Relaxed);
     let scalar = Kernels::scalar();
     let mut rng = Rng(0x9047_AB1E);
-    for &len in &[
-        0usize, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 96, 255, 1024, 4113,
-    ] {
+    for &len in ENCODE_LENS {
         for &(k, rows) in &[(1usize, 1usize), (2, 3), (4, 4), (5, 5), (10, 4), (16, 8)] {
             let coeffs = rng.bytes(rows * k);
             let data: Vec<Vec<u8>> = (0..k).map(|_| rng.bytes(len)).collect();
@@ -103,9 +124,7 @@ fn arch_raid_kernels_match_core() {
         return;
     };
     let mut rng = Rng(0x7A1D_5EED);
-    for &len in &[
-        0usize, 1, 7, 8, 15, 16, 31, 32, 33, 63, 64, 65, 96, 255, 1024, 4113,
-    ] {
+    for &len in RAID_LENS {
         for &n in &[2usize, 3, 5, 8, 17] {
             let sources: Vec<Vec<u8>> = (0..n).map(|_| rng.bytes(len)).collect();
             let refs: Vec<&[u8]> = sources.iter().map(|s| s.as_slice()).collect();
