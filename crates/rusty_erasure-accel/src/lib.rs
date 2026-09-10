@@ -21,8 +21,7 @@
 
 #![deny(missing_docs)]
 
-use core::sync::atomic::AtomicU64;
-
+use rusty_erasure_core::census64::AtomicU64;
 use rusty_erasure_core::kernel::Kernels;
 
 pub mod aarch64;

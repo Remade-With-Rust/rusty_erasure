@@ -7,7 +7,9 @@
 //! agreement is validated — a mismatch is a typed error, never a silent
 //! truncation and never a panic.
 
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::Ordering;
+
+use crate::census64::AtomicU64;
 
 use crate::error::CodeError;
 use crate::tables::{TABLE_BYTES, table_mul};

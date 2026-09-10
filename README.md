@@ -39,12 +39,14 @@ parameters ISA-L leaves undefined. No C, no NASM, no GPL anywhere in the build.
   reaches the SIMD kernels, and a full-grid conformance job that regenerates
   its vectors from upstream ISA-L on every run.
 
-> **Status: `0.4.0` — published, complete and conformant.** Every kernel is
-> deployed on every architecture it can run on, RAID-6 included. The public API
-> is settled and **encoded output is frozen**: shards written by any build stay
-> readable, and stay byte-identical to ISA-L. Every claim in this README has an
-> entry in [`corpus/LEDGER.md`](corpus/LEDGER.md) with the run that produced
-> it — see [CHANGELOG.md](CHANGELOG.md) for what 0.4.0 added.
+> **Status: `0.4.1` — complete and conformant** (`0.4.0` is the current
+> crates.io release). Every kernel is deployed on every architecture it can run
+> on, RAID-6 included, and as of 0.4.1 the core also builds on 32-bit bare
+> metal. The public API is settled and **encoded output is frozen**: shards
+> written by any build stay readable, and stay byte-identical to ISA-L. Every
+> claim in this README has an entry in
+> [`corpus/LEDGER.md`](corpus/LEDGER.md) with the run that produced it — see
+> [CHANGELOG.md](CHANGELOG.md) for what each release added.
 
 ## Performance (interleaved, pinned, CPU-time)
 
@@ -152,9 +154,23 @@ on aarch64; SIMD128 on wasm32. Dispatch resolves once at the surface, never
 inside a loop, and an always-on census reports what fraction of production bytes
 actually reached the SIMD path.
 
-**Portability** — x86-64, aarch64 and wasm32, across Linux, macOS and Windows.
-`no_std + alloc` core; `--no-default-features` is a pure-safe build with no
-`unsafe` anywhere in the tree.
+**Portability** — x86-64, aarch64 and wasm32, across Linux, macOS and Windows,
+**plus 32-bit bare metal**: `rusty_erasure-core` and the `--no-default-features`
+facade build for `thumbv7em-none-eabihf` (Cortex-M4F) and
+`riscv32imac-unknown-none-elf` (RV32), both CI rungs. `no_std + alloc` core;
+`--no-default-features` is a pure-safe build with no `unsafe` anywhere in the
+tree.
+
+| target class | core | scalar facade | SIMD (`accel`) |
+|---|---|---|---|
+| x86-64 / aarch64 / wasm32 (hosted) | ✅ | ✅ | ✅ SSSE3·AVX2·GFNI / NEON / SIMD128 |
+| Cortex-M4F, RV32 (bare metal, no 64-bit atomics) | ✅ | ✅ | — no kernel set for these ISAs |
+
+On a part without 64-bit atomics the reach census compiles to a zero-sized stub
+and `census::CENSUS_LIVE` is `false`: a zero there means *not measurable on this
+target*, never *measured zero*. Run on hardware — an ESP32-S3 (Xtensa LX7, also
+32-bit, also no 64-bit atomics) encodes, verifies and recovers on the board; see
+[`bare-metal/esp32s3`](bare-metal/esp32s3/README.md) for the log and its timings.
 
 ## Install
 

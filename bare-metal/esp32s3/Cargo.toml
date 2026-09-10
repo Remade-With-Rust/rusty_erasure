@@ -1,0 +1,30 @@
+[package]
+name = "s3erasure"
+version = "0.1.0"
+edition = "2021"
+
+# On-board proof for rusty_erasure's bare-metal support: an ESP32-S3 (Xtensa
+# LX7, 32-bit, NO 64-bit atomics) encoding, verifying and recovering Reed-
+# Solomon shards in `no_std + alloc`, plus a throughput measurement.
+#
+# Deliberately outside the workspace (`exclude` in the root manifest): it needs
+# Espressif's Rust fork, which CI does not have, so it is a hand-run
+# instrument, not a gate.
+#
+# `default-features = false` is the pure-scalar build. That is not a
+# limitation here: `rusty_erasure-accel` has no kernel set for Xtensa, so the
+# scalar kernels ARE the shipping path on this part.
+
+[dependencies]
+esp-hal = { version = "1.2.1", features = ["esp32s3", "unstable"] }
+esp-alloc = { version = "0.11.0", features = ["esp32s3"] }
+esp-bootloader-esp-idf = { version = "0.6.0", features = ["esp32s3"] }
+esp-println = { version = "0.18.0", default-features = false, features = ["esp32s3", "jtag-serial"] }
+esp-backtrace = { version = "0.20.0", features = ["esp32s3", "println", "panic-handler"] }
+rusty_erasure = { path = "../../crates/rusty_erasure", default-features = false }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+debug = 2

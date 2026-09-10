@@ -28,6 +28,31 @@ foreach ($t in $targets) {
     if ($LASTEXITCODE -ne 0) { $failed += "$t (--no-default-features)" }
 }
 
+# Bare metal: 32-bit parts with NO 64-bit atomics. Only core and the pure-safe
+# facade build here -- `rusty_erasure-accel` needs std for runtime SIMD dispatch
+# and has no kernel set for these parts anyway. This is the rung that keeps the
+# `no-std` category honest (see rusty_erasure-core/src/census64.rs).
+$bareTargets = @(
+    "thumbv7em-none-eabihf",
+    "riscv32imac-unknown-none-elf"
+)
+
+foreach ($t in $bareTargets) {
+    Write-Host "== cargo check (bare metal) --target $t" -ForegroundColor Cyan
+    # The rung must not be able to pass vacuously: if the target ever reports
+    # 64-bit atomics, census64 compiles its HOSTED arm and the stub goes untested.
+    $cfg = rustc --print cfg --target $t
+    if ($cfg -match 'target_has_atomic="64"') {
+        Write-Host "  $t reports 64-bit atomics; this rung no longer tests the census64 stub" -ForegroundColor Red
+        $failed += "$t (rung is vacuous)"
+        continue
+    }
+    cargo check -p rusty_erasure-core --target $t
+    if ($LASTEXITCODE -ne 0) { $failed += "$t (core)" }
+    cargo check -p rusty_erasure --no-default-features --target $t
+    if ($LASTEXITCODE -ne 0) { $failed += "$t (--no-default-features)" }
+}
+
 Write-Host "== cargo check (workspace incl. CLI) on host" -ForegroundColor Cyan
 cargo check --workspace
 if ($LASTEXITCODE -ne 0) { $failed += "host workspace" }
@@ -37,4 +62,4 @@ if ($failed.Count -gt 0) {
     $failed | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
     exit 1
 }
-Write-Host "Check matrix green on all $($targets.Count) targets." -ForegroundColor Green
+Write-Host "Check matrix green on all $($targets.Count) shipped targets + $($bareTargets.Count) bare-metal targets." -ForegroundColor Green

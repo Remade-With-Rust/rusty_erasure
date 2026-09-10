@@ -6,6 +6,76 @@ changes are called out explicitly, per the hardening standard (H-38).
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.4.1] — 2026-09-09
+
+32-bit bare metal. The crate has carried the `no-std` category since its first
+publish, and on a Cortex-M4F or an RV32 part that category was **false**: the
+build failed outright. This release makes the label a claim instead of an
+aspiration, and adds the CI rungs that keep it one.
+
+**Encoded output is unchanged and remains byte-identical to Intel ISA-L.**
+Nothing here is a format change, and on every hosted target the emitted code is
+byte-for-byte what 0.4.0 emitted (proven below, not asserted).
+
+### Fixed
+
+- **`rusty_erasure-core` now builds on targets without 64-bit atomics.**
+  `kernel.rs` imported `core::sync::atomic::AtomicU64` for the reach census's
+  `SCALAR_CENSUS_BYTES` counter and the `Kernels::census` field. That type does
+  not exist on `thumbv7em-none-eabihf` or `riscv32imac-unknown-none-elf`, so the
+  crate failed with `error[E0432]: unresolved import` — in a diagnostic counter,
+  not in a line of coding math.
+
+### Added
+
+- **`rusty_erasure_core::census64`** — the one seam every census counter goes
+  through. Where 64-bit atomics exist it is `pub use
+  core::sync::atomic::AtomicU64`: the *same type*, not a wrapper, so the public
+  statics and the public `Kernels::census` field keep their published type.
+  Where they do not, it is a zero-sized stub whose operations fold away and
+  whose statics leave `.bss` entirely.
+
+  A `portable-atomic` fallback was considered and rejected: on a core with no
+  64-bit atomic instruction it needs a critical-section implementation, and a
+  library that enables that conscripts every downstream firmware's interrupt
+  policy for the sake of a diagnostic counter. It would also cost this crate its
+  "zero dependencies" property. The seam is one type wide, so a firmware that
+  *does* want the census on-chip can supply `portable_atomic::AtomicU64` there.
+
+- **`census64::CENSUS_LIVE`**, re-exported as `rusty_erasure::census::CENSUS_LIVE`
+  — `false` on a stubbed target. **A zero from a census counter on such a part
+  means "not measurable on this target", never "measured zero".** A counter that
+  silently reads zero is exactly the stale instrument this codebase's own rules
+  warn about, so the fact is published rather than buried.
+
+- **CI rungs on both bare-metal targets**, and the same pair in
+  `tools/check-matrix.ps1`. Both are written so they **cannot pass vacuously**:
+  each asserts via `rustc --print cfg` that the target really lacks 64-bit
+  atomics, so the rung is known to be exercising the stub arm and not silently
+  taking the hosted path.
+
+- **`bare-metal/esp32s3`** — a hand-run firmware (outside the workspace; it
+  needs Espressif's Rust fork, which CI does not have) that encodes, verifies
+  and recovers on an ESP32-S3. Xtensa LX7 is also 32-bit with no 64-bit atomics,
+  so it exercises the same stub configuration on real silicon. It gates on
+  correctness first — RS(10,4) encode, `verify`, then rebuild two destroyed
+  shards and compare byte for byte — and only then reports throughput.
+
+### Guarded against the reverse mistake
+
+A stub selected on a **hosted** target would make every count-based verdict this
+project has published into fiction, while every other gate still passed. Two
+things prevent it: a `const` assertion that the selected type is eight bytes
+wherever 64-bit atomics exist, and a unit test that asserts on **behaviour**
+(count to 42 and read it back) rather than on the `CENSUS_LIVE` constant.
+
+### Codegen impact on hosted targets: none, proven
+
+`cargo rustc --release --emit=asm` for `rusty_erasure-core` at 0.4.0 and at this
+release produce **byte-identical instruction streams** (same SHA-256 over all
+6,186 instruction lines). The only difference anywhere in the emitted assembly
+is panic-`Location` line-number metadata, because `kernel.rs` gained two lines.
+
 ## [0.4.0] — 2026-08-28
 
 The first release that carries the whole engine: every kernel on every

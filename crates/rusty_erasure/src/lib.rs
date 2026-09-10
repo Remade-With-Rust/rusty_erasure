@@ -143,7 +143,15 @@ pub mod compat {
 pub mod census {
     use core::sync::atomic::Ordering;
 
+    #[doc(inline)]
+    pub use rusty_erasure_core::census64::CENSUS_LIVE;
+
     /// Source bytes processed per kernel family since process start.
+    ///
+    /// On a target without 64-bit atomics every counter is a zero-sized stub
+    /// and both fields read 0 forever — consult [`CENSUS_LIVE`] before
+    /// believing a zero here. **Zero means "not measurable on this target",
+    /// never "measured zero".**
     #[derive(Debug, Clone, Copy)]
     pub struct Census {
         /// Bytes through the scalar oracle kernels.

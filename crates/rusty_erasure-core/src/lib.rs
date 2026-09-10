@@ -19,6 +19,7 @@
 
 extern crate alloc;
 
+pub mod census64;
 pub mod encode;
 pub mod error;
 pub mod gf;

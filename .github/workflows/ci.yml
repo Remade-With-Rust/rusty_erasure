@@ -41,6 +41,47 @@ jobs:
       - name: check pure-safe build (--no-default-features)
         run: cargo check -p rusty_erasure --no-default-features --target ${{ matrix.target }}
 
+  # Bare metal: 32-bit parts with NO 64-bit atomics, where
+  # `core::sync::atomic::AtomicU64` does not exist. The crate carries the
+  # `no-std` category, and until 0.4.1 that category was FALSE here — the
+  # reach census's counters cost the crate both targets (see
+  # `rusty_erasure-core/src/census64.rs`). This rung is what makes the label
+  # a claim instead of an aspiration; without it the regression is one
+  # `use core::sync::atomic::AtomicU64` away and nothing else would catch it.
+  #
+  # These are `--no-default-features` (pure scalar) because `rusty_erasure-accel`
+  # is genuinely std-dependent — runtime SIMD dispatch needs `OnceLock` and
+  # `is_x86_feature_detected!` — and none of its kernel sets exist on Cortex-M
+  # or RV32 anyway. The scalar build is the documented bare-metal surface.
+  check-bare-metal:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - thumbv7em-none-eabihf          # Cortex-M4F
+          - riscv32imac-unknown-none-elf   # RV32
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - run: rustup target add ${{ matrix.target }}
+      - name: check core on ${{ matrix.target }}
+        run: cargo check -p rusty_erasure-core --target ${{ matrix.target }}
+      - name: check facade scalar build on ${{ matrix.target }}
+        run: cargo check -p rusty_erasure --no-default-features --target ${{ matrix.target }}
+      # The gate must be unable to pass vacuously: prove the target really has
+      # no 64-bit atomics, so `census64` is compiling its STUB arm here and not
+      # silently taking the hosted path. Without this the rung would still pass
+      # if `target_has_atomic = "64"` ever became true and the seam went untested.
+      - name: prove the stub arm is the one under test
+        run: |
+          set -e
+          cfgs=$(rustc --print cfg --target ${{ matrix.target }})
+          if echo "$cfgs" | grep -q 'target_has_atomic="64"'; then
+            echo "::error::${{ matrix.target }} reports 64-bit atomics; this rung no longer tests the census64 stub"
+            exit 1
+          fi
+          echo "confirmed: no target_has_atomic=\"64\" — census64 stub arm is under test"
+
   test:
     runs-on: ${{ matrix.os }}
     strategy:
