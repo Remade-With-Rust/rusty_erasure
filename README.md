@@ -4,7 +4,7 @@
 [![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 [![remade with rust](https://img.shields.io/badge/remade--with--rust-portfolio-orange.svg)](https://github.com/remade-with-rust)
 
-### In The Wild with 2,040 Active Installs
+### In The Wild with 2,087 Active Installs
 
 FREE RAG Converter Online -- <a href="https://RAGconverter.com">RAGconverter.com</a>
 
