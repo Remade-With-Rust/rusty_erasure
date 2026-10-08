@@ -165,7 +165,7 @@ dependencies = [
 
 [[package]]
 name = "rusty_erasure"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "reed-solomon-erasure",
  "rusty_erasure-accel",
@@ -174,21 +174,21 @@ dependencies = [
 
 [[package]]
 name = "rusty_erasure-accel"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "rusty_erasure-core",
 ]
 
 [[package]]
 name = "rusty_erasure-alloc"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "rusty_alloc-api",
 ]
 
 [[package]]
 name = "rusty_erasure-cli"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "rusty_erasure",
  "rusty_erasure-alloc",
@@ -196,11 +196,11 @@ dependencies = [
 
 [[package]]
 name = "rusty_erasure-core"
-version = "0.4.1"
+version = "0.4.2"
 
 [[package]]
 name = "rusty_erasure-demo"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "rusty_erasure",
  "rusty_erasure-alloc",
@@ -208,7 +208,7 @@ dependencies = [
 
 [[package]]
 name = "rusty_erasure-fuzzlib"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "rusty_erasure",
  "rusty_erasure-accel",

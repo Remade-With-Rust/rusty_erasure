@@ -6,6 +6,12 @@ changes are called out explicitly, per the hardening standard (H-38).
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.4.2] — 2026-10-08
+
+Allocator update; no API change (`cargo semver-checks` against crates.io: no semver update required).
+
+- `rusty_alloc-api` (and, where pinned, `rusty_alloc`) `=2.2.5`, part of the portfolio-wide rollout. 2.2.5 fixes 2.2.1–2.2.4 failing to build in an MSVC consumer that unwinds with LTO.
+
 ## [0.4.1] — 2026-09-09
 
 32-bit bare metal. The crate has carried the `no-std` category since its first
