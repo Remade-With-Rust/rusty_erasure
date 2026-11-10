@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.4](https://github.com/Remade-With-Rust/rusty_erasure/compare/rusty_erasure-cli-v0.4.3...rusty_erasure-cli-v0.4.4) - 2026-11-10
+
+### Other
+
+- 5,636 active installs
+- 4,200 active installs
+- 3,921 active installs
+
 ## [0.4.3](https://github.com/Remade-With-Rust/rusty_erasure/compare/rusty_erasure-cli-v0.4.2...rusty_erasure-cli-v0.4.3) - 2026-10-17
 
 ### Other
